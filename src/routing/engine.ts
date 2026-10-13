@@ -11,13 +11,13 @@ import { findCandidates, now, straightLineResult } from './candidates';
 import type { CellLookup } from './cells';
 import { IdbCellLookup } from './cells-idb';
 import { Graph } from './graph';
-import type { RegionManifest } from './graph-format';
+import { graphTileBounds, type GraphTileInput, type RegionManifest } from './graph-format';
 import { findLoops } from './loop';
 import { NoveltyScorer } from './novelty';
 import { PackSource, packsIndexUrl, type PackSourceOptions, type PackSourcePerf } from './pack-source';
 import { Searcher } from './search';
 import { SpatialIndex } from './spatial';
-import { TileSource, type TileSourceOptions, type TileSourcePerf } from './tiles-source';
+import { graphTilesFor, TileSource, type TileSourceOptions, type TileSourcePerf } from './tiles-source';
 
 const DEG = Math.PI / 180;
 export const MAX_AREA_RADIUS_KM = 8;
@@ -137,6 +137,11 @@ export function circleBBox(center: LonLat, radiusKm: number): BBox {
   return padBBox([center[0], center[1], center[0], center[1]], radiusKm * 1000);
 }
 
+export function loopBBox(center: LonLat, targetKm: number): BBox {
+  if (!Number.isFinite(targetKm) || targetKm < 1 || targetKm > 100) throw new Error('Loop length must be 1–100 km');
+  return circleBBox(center, Math.max(1, targetKm / 2));
+}
+
 /** Phase timings of the last route()/loop() call (diagnostics: `await remote.perf` from the page). */
 export interface RoutePerf {
   /** Fetch/inflate/decode of the request's tiles (0 when every tile came from memory). */
@@ -211,10 +216,32 @@ export class RouteEngine implements RouteApi {
 
   async downloadArea(center: LonLat, radiusKm: number, onProgress?: (p: DownloadProgress) => void): Promise<{ tiles: number; bytes: number }> {
     if (!(radiusKm > 0) || radiusKm > MAX_AREA_RADIUS_KM) throw new Error(`Radius must be 0–${MAX_AREA_RADIUS_KM} km`);
+    return this.downloadBox(center, radiusKm, circleBBox(center, radiusKm), onProgress);
+  }
+
+  /** Full graph tiles, one bounded request at a time. Completed sections survive interrupted downloads. */
+  async downloadLoopArea(center: LonLat, targetKm: number, onProgress?: (p: DownloadProgress) => void): Promise<{ tiles: number; bytes: number }> {
+    const wanted = graphTilesFor(loopBBox(center, targetKm));
+    let tiles = 0, bytes = 0;
+    for (const [i, [x, y]] of wanted.entries()) {
+      if (!(await this.tiles.hasCompleteLoopTile(x, y))) {
+        const b = graphTileBounds(x, y);
+        const bbox: BBox = [b.west, b.south, b.east, b.north];
+        const mid: LonLat = [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2];
+        const r = await this.downloadBox(mid, distanceM(...mid, bbox[2], bbox[3]) / 1000, bbox, (p) => {
+          onProgress?.({ ...p, done: i, total: wanted.length, note: `Section ${i + 1} of ${wanted.length}${p.note ? ` · ${p.note}` : ''}` });
+        }, [x, y]);
+        tiles += r.tiles; bytes += r.bytes;
+      }
+      onProgress?.({ phase: 'store', done: i + 1, total: wanted.length });
+    }
+    return { tiles, bytes };
+  }
+
+  private async downloadBox(center: LonLat, radiusKm: number, bbox: BBox, onProgress?: (p: DownloadProgress) => void, fullTile?: [number, number]): Promise<{ tiles: number; bytes: number }> {
     if (isOffline()) throw new OfflineError();
     // Agent D's modules (wave 1): imported lazily so the worker boots without them and tests do not depend on them.
     const [{ fetchOverpassWays, DEFAULT_OVERPASS_ENDPOINT, ALTERNATE_OVERPASS_ENDPOINTS }, { buildGraphTiles }] = await Promise.all([import('./overpass'), import('./graph-build')]);
-    const bbox = circleBBox(center, radiusKm);
     onProgress?.({ phase: 'fetch', done: 0, total: 1 });
     // Losing the connection mid-download aborts the retry loop at once instead of sleeping through it.
     const abort = new AbortController();
@@ -245,9 +272,16 @@ export class RouteEngine implements RouteApi {
     const built = buildGraphTiles(ways);
     onProgress?.({ phase: 'build', done: 1, total: 1 });
     // An empty area would be stored, listed on Data, and still route to "no coverage" — say so instead.
-    if (built.tiles.size === 0) throw new EmptyAreaError();
-    const id = `${center[0].toFixed(4)},${center[1].toFixed(4)},${radiusKm}km`;
-    const rec = await this.tiles.storeArea({ id, center, radiusKm }, built.tiles, onProgress);
+    if (built.tiles.size === 0 && !fullTile) throw new EmptyAreaError();
+    // Neighbouring fragments must not replace complete tiles. Sea/fields are valid empty coverage.
+    let store = built.tiles;
+    if (fullTile) {
+      const [tx, ty] = fullTile, key = `${tx}/${ty}`;
+      const empty: GraphTileInput = { tx, ty, nodeId: [], nodeLon: [], nodeLat: [], nodeFlags: [], arcStart: [0], arcTo: [], arcLen: [], arcFlags: [], arcWay: [], arcShapeStart: [], arcShapeEnd: [], shapeLon: [], shapeLat: [] };
+      store = new Map([[key, built.tiles.get(key) ?? empty]]);
+    }
+    const id = fullTile ? `loop-tile:${fullTile.join('/')}` : `${center[0].toFixed(4)},${center[1].toFixed(4)},${radiusKm}km`;
+    const rec = await this.tiles.storeArea({ id, center, radiusKm }, store, onProgress);
     this.graphs.length = 0;
     return { tiles: rec.tiles, bytes: rec.bytes };
   }
@@ -340,12 +374,16 @@ export class RouteEngine implements RouteApi {
 
   async loop(req: LoopRequest): Promise<RouteResult> {
     const t0 = now();
-    const bbox = padBBox([req.from[0], req.from[1], req.from[0], req.from[1]], Math.max(1000, req.targetKm * 500));
+    const bbox = loopBBox(req.from, req.targetKm);
     const c = await this.graphFor(bbox);
     const t1 = now();
     const prepared = (await this.prepareCells(c)) ?? 0;
     const t2 = now();
-    const res = findLoops(c.graph, this.cells, req, { spatial: c.spatial, scorer: c.scorer, searcher: c.searcher, graphTiles: c.graph.tileKeys.length });
+    const res = c.graph.nodeCount ? findLoops(c.graph, this.cells, req, { spatial: c.spatial, scorer: c.scorer, searcher: c.searcher, graphTiles: c.graph.tileKeys.length }) : { candidates: [], shortestM: req.targetKm * 1000, budgetM: req.targetKm * 1250, graphTiles: c.graph.tileKeys.length, ms: 0 };
+    if (!res.candidates.length) {
+      const { missing } = await this.tiles.tilesFor(bbox);
+      if (missing.length) throw new NoCoverageError(missing.length, (await this.tiles.coverage(bbox)).packable);
+    }
     res.ms = Math.round(now() - t0);
     this.recordPerf(c, t2 - t1, prepared, now() - t2, res.ms);
     return res;

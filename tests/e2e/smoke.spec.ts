@@ -206,6 +206,39 @@ test.describe('Unfog smoke (mock engines)', () => {
     await expect(page.locator('.stat-chip')).toBeVisible();
   });
 
+  test('long loop offers wider coverage, downloads it, and retries', async ({ page }) => {
+    await boot(page);
+    await page.evaluate(() => {
+      const route = (window as unknown as { __unfog: { ctx: { engines: { route: {
+        loop: (req: unknown) => Promise<unknown>;
+        downloadLoopArea: (from: number[], targetKm: number) => Promise<{ tiles: number; bytes: number }>;
+      } } } } }).__unfog.ctx.engines.route;
+      const original = route.loop.bind(route);
+      let downloaded = false;
+      route.loop = (req) => {
+        if (downloaded) return original(req);
+        return Promise.reject(Object.assign(new Error('Missing roads'), { name: 'NoCoverageError' }));
+      };
+      route.downloadLoopArea = async (_from, targetKm) => {
+        if (targetKm !== 28) throw new Error('Wrong download length');
+        downloaded = true;
+        return { tiles: 10, bytes: 1000 };
+      };
+      localStorage.setItem('unfog.routePrefs', JSON.stringify({ detour: 0.25, loopKm: 28 }));
+    });
+    // Preferences were loaded at boot: set the length through the real slider.
+    await page.getByRole('button', { name: 'Search destination' }).click();
+    await page.getByRole('option', { name: /Explore a loop from here/ }).click();
+    const sheet = page.locator('.sheet.route.loop');
+    const slider = sheet.getByLabel('Loop length', { exact: true });
+    await expect(slider).toHaveAttribute('max', '100');
+    await slider.fill('28');
+    await expect(sheet).toContainText('More road coverage is needed');
+    await sheet.getByRole('button', { name: 'Download roads for 28 km loops' }).click();
+    await expect(sheet.locator('.cand').first()).toBeVisible();
+    await expect(sheet.locator('.download-offer')).toHaveCount(0);
+  });
+
   test('Data, Stats and Help screens open', async ({ page }) => {
     await boot(page);
     await page.getByRole('tab', { name: 'Data' }).click();

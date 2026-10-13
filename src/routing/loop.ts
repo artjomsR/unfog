@@ -90,7 +90,7 @@ export const LOOP_FALLBACK_LEG_SLACKS: readonly number[] = [1.6, 3, 6];
 export const LOOP_FALLBACK_BEARING_DEG = 40;
 /** Two-via pass: the vias sit this far either side of the heading. */
 export const LOOP_FALLBACK_VIA_SPREAD_DEG = 50;
-/** The fallback stops after this long (the whole request must stay under ~2 s). */
+/** Time allowed for fallback attempts, independently of the initial search and road-ring preparation. */
 export const LOOP_FALLBACK_MS = 1200;
 /**
  * Fallback passes in order: triangles off the road ring first, then a single turnaround the return
@@ -467,11 +467,12 @@ export function findLoops(graph: Graph, lookup: CellLookup, req: LoopRequest, ct
       return routeLoop(searcher, origin, stops, req.mode, heading, LOOP_FALLBACK_LEG_SLACKS, turnPenaltyM);
     };
     const found: Array<{ loop: LoopPath; coords: LonLat[] }> = [];
+    const fallbackStart = now();
     for (const pass of LOOP_FALLBACK_PASSES) {
       const anyArc = pass.anyArc === true;
       // The out-and-back passes are the last resort: skipped while a real loop exists.
       if (anyArc && found.some((f) => !f.loop.outback)) break;
-      if (now() - t0 > LOOP_FALLBACK_MS) break;
+      if (now() - fallbackStart > LOOP_FALLBACK_MS) break;
       for (let k = 0; k < LOOP_HEADINGS; k++) {
         const heading = (360 / LOOP_HEADINGS) * k;
         const first = ringAttempt(heading, pass.r * targetM, pass.vias, anyArc);
