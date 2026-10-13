@@ -245,6 +245,9 @@ export function createMockRoute(synth: SynthCells): RouteApi {
     async listDownloads() {
       return downloads.slice();
     },
+    async downloadLoopArea(center, targetKm, onProgress) {
+      return this.downloadArea(center, Math.max(1, targetKm / 2), onProgress);
+    },
     async deleteDownload(id) {
       const i = downloads.findIndex((d) => d.id === id);
       if (i >= 0) downloads.splice(i, 1);

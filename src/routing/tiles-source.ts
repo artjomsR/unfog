@@ -332,6 +332,12 @@ export class TileSource {
     return db ? db.getAll('areas') : [];
   }
 
+  /** Verify ownership too: a later local-area download may have replaced this tile. */
+  async hasCompleteLoopTile(x: number, y: number): Promise<boolean> {
+    const db = await this.openDb();
+    return (await db?.get('tiles', tileKeyOf(x, y)))?.areaId === `loop-tile:${x}/${y}`;
+  }
+
   async deleteDownload(id: string): Promise<void> {
     const db = await this.openDb();
     if (!db) return;

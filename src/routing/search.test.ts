@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { cellsAlong, distanceM } from '../grid/cell';
 import { ALL_MODES, makeLattice, type Lattice } from '../../tests/fixtures/routing/lattice';
 import { buildTestTiles, type TestWay } from '../../tests/fixtures/routing/tile-builder';
@@ -482,6 +482,13 @@ describe('loop mode', () => {
     const dead = g.deadEnds(ArcFlag.WALK);
     expect(g.nodeCount - dead.reduce((a: number, b: number) => a + b, 0)).toBe(6);
     const onRoad = P(0, 0);
+    // A slow initial search must not spend the fallback's separate time allowance.
+    const clock = vi.spyOn(performance, 'now').mockReturnValueOnce(0).mockReturnValue(5000);
+    try {
+      expect(findLoops(g, lk, { from: onRoad, mode: 'walk', targetKm: 3 }, ctx).candidates.length).toBeGreaterThan(0);
+    } finally {
+      clock.mockRestore();
+    }
     for (const targetKm of [2, 3]) {
       const res = findLoops(g, lk, { from: onRoad, mode: 'walk', targetKm }, ctx);
       const T = targetKm * 1000;

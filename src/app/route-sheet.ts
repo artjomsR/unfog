@@ -3,7 +3,7 @@
  * what a route is, detour slider, candidate rows, Go. Go = follow mode with a compact bar and End.
  *
  * Loop mode ("Explore from here") is the same sheet with a loop-length row (2 / 3 / 5 / 8 km
- * chips + a 1–15 km slider) instead of the detour slider: `route.loop()` returns round trips from
+ * chips + a 1–100 km slider) instead of the detour slider: `route.loop()` returns round trips from
  * the user's position (else the map centre), listed as Loop A / B / C and drawn like routes.
  *
  * One travel mode (feedback-2, data: "one mode, the most permissive"): every request goes to the
@@ -49,7 +49,7 @@ interface Prefs {
 export const TRAVEL_MODE: Mode = 'walk';
 
 export const LOOP_CHIPS_KM = [2, 3, 5, 8];
-export const LOOP_KM = { min: 1, max: 15, step: 0.5, default: 3 };
+export const LOOP_KM = { min: 1, max: 100, step: 0.5, default: 3 };
 const LOOP_LABELS = ['A', 'B', 'C', 'D', 'E'];
 
 function loadPrefs(): Prefs {
@@ -361,7 +361,7 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
       // Show where the ends are (the pin may be off-screen) so the next step makes sense.
       if (kind === 'route' && dest) map.fitCoords([origin, dest.lonlat], { top: shell.top.offsetHeight + 12, bottom: sheet.offsetHeight + 24, left: 48, right: 48 }, 15.5);
       if (isNoCoverage(err)) {
-        await offerDownload(origin, kind === 'loop' ? origin : dest!.lonlat, kind === 'loop' ? Math.min(8, Math.max(3, Math.ceil(prefs.loopKm * 0.4) + 1)) : undefined);
+        await offerDownload(origin, kind === 'loop' ? origin : dest!.lonlat);
       } else {
         setStatus(
           el(
@@ -459,10 +459,12 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
   }
 
   async function offerDownload(from: LonLat, to: LonLat, radius?: number): Promise<void> {
+    const loopTarget = kind === 'loop' ? prefs.loopKm : null;
     const centre: LonLat = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2];
     const span = distanceM(from[0], from[1], to[0], to[1]);
     const radiusKm = radius ?? Math.min(8, Math.max(3, Math.ceil(span / 2000) + 1));
-    const box = el('div', { class: 'download-offer' }, el('div', { class: 'name', text: 'No routing data for this area yet' }));
+    const box = el('div', { class: 'download-offer' }, el('div', { class: 'name', text: loopTarget ? 'More road coverage is needed to search this loop length' : 'No routing data for this area yet' }));
+    if (loopTarget) box.appendChild(el('div', { class: 'muted small', text: navigator.onLine === false ? 'Connect to the internet to download the missing roads.' : 'Download the wider area in sections. Longer loops need more data; completed sections are saved for next time.' }));
     let regions: string[] = [];
     try {
       const cov = await ctx.engines.route.coverage([Math.min(from[0], to[0]), Math.min(from[1], to[1]), Math.max(from[0], to[0]), Math.max(from[1], to[1])]);
@@ -516,7 +518,7 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
       }
     }
     box.appendChild(
-      el('button', { class: `btn ${regions.length ? 'ghost' : 'primary'}`, type: 'button', onclick: () => void runDownload('Downloading area', (cb) => ctx.engines.route.downloadArea(centre, radiusKm, ctx.engines.proxy(cb))) }, `Download this area (${radiusKm} km around here)`),
+      el('button', { class: `btn ${regions.length ? 'ghost' : 'primary'}`, type: 'button', onclick: () => void runDownload('Downloading area', (cb) => loopTarget ? ctx.engines.route.downloadLoopArea(centre, loopTarget, ctx.engines.proxy(cb)) : ctx.engines.route.downloadArea(centre, radiusKm, ctx.engines.proxy(cb))) }, loopTarget ? `Download roads for ${fmtDistanceTidy(loopTarget * 1000, units())} loops` : `Download this area (${radiusKm} km around here)`),
     );
     // A→B without any street data can still be a straight line to follow (a loop cannot).
     if (kind === 'route') box.appendChild(el('button', { class: 'btn ghost', type: 'button', onclick: () => void routeAnyway(from, to) }, 'Route anyway (straight line)'));
