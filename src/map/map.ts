@@ -139,6 +139,7 @@ export class UnfogMap {
   private onFallback = false;
   follow = false;
   lastFix: Fix | null = null;
+  private compassHeading: number | null = null;
 
   constructor(opts: UnfogMapOptions) {
     registerOverlayProtocols(opts.grid, opts.renderSettings);
@@ -175,8 +176,8 @@ export class UnfogMap {
 
     this.userEl = document.createElement('div');
     this.userEl.className = 'user-dot';
-    this.userEl.innerHTML = '<div class="user-dot-halo"></div><div class="user-dot-core"></div>';
-    this.userMarker = new maplibregl.Marker({ element: this.userEl, anchor: 'center' });
+    this.userEl.innerHTML = '<div class="user-dot-direction"></div><div class="user-dot-halo"></div><div class="user-dot-core"></div>';
+    this.userMarker = new maplibregl.Marker({ element: this.userEl, anchor: 'center', rotationAlignment: 'map' });
 
     map.on('style.load', () => {
       this.styleLoaded = true;
@@ -395,6 +396,7 @@ export class UnfogMap {
     this.userMarker.setLngLat([fix.lon, fix.lat]);
     if (!this.userEl.isConnected) this.userMarker.addTo(this.map);
     this.userEl.classList.toggle('coarse', fix.accuracy > 100);
+    this.updateUserHeading();
     if (this.follow) {
       // A fix that lands while setFollow's zoom ease is still running would restart the ease at the
       // current, intermediate zoom and leave the map stuck there (15.2 instead of 16): carry the
@@ -409,6 +411,19 @@ export class UnfogMap {
       }
       this.map.easeTo({ center: [fix.lon, fix.lat], zoom, duration: 700, essential: true });
     }
+  }
+
+  setCompassHeading(heading: number | null): void {
+    this.compassHeading = heading;
+    this.updateUserHeading();
+  }
+
+  private updateUserHeading(): void {
+    // Prefer facing direction even when stationary; GPS course is the fallback.
+    const heading = this.compassHeading ?? this.lastFix?.heading ?? null;
+    const hasHeading = heading !== null && Number.isFinite(heading) && heading >= 0 && heading < 360;
+    this.userEl.classList.toggle('has-heading', hasHeading);
+    this.userMarker.setRotation(hasHeading ? heading : 0);
   }
 
   setFollow(on: boolean, zoomTo?: number): void {

@@ -108,8 +108,15 @@ p { margin: 0 0 10px; }
 .app .maplibregl-ctrl-attrib.maplibregl-compact { border-radius: 10px; margin: 0 0 6px 16px; }
 .app .maplibregl-ctrl-attrib a { color: #333; }
 
-/* user dot (mock.js) + destination pin */
+/* Current location: heading fan behind the accuracy halo and white-ringed dot. */
 .user-dot { width: 44px; height: 44px; position: relative; pointer-events: none; }
+.user-dot-direction {
+  display: none; position: absolute; left: 50%; top: 50%; width: 112px; height: 112px;
+  margin: -56px 0 0 -56px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(10, 132, 255, 0.42) 0%, rgba(10, 132, 255, 0.22) 45%, rgba(10, 132, 255, 0) 70%);
+  clip-path: polygon(50% 50%, 0 0, 100% 0);
+}
+.user-dot.has-heading .user-dot-direction { display: block; }
 .user-dot-halo { position: absolute; inset: 0; border-radius: 50%; background: rgba(10, 132, 255, 0.18); }
 .user-dot-core { position: absolute; left: 50%; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: #0a84ff; border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4); }
 .user-dot.coarse .user-dot-halo { background: rgba(10, 132, 255, 0.10); transform: scale(1.5); }

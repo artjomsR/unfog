@@ -19,6 +19,7 @@ import { createTracking, type TrackingController } from './app/tracking';
 import { el, toast } from './app/ui';
 import { createSync } from './sync/setup';
 import { LocationManager, describeLocationError } from './map/location';
+import { Compass } from './map/compass';
 import { DEFAULT_CENTER, UnfogMap, savedCenter } from './map/map';
 import { overlayPerf } from './map/overlay';
 import { Recorder, type RecorderEvents } from './record/session';
@@ -158,6 +159,7 @@ async function boot(): Promise<void> {
   };
 
   // ---- location → map
+  const compass = new Compass((heading) => map.setCompassHeading(heading));
   locationMgr.onFix((fix) => map.setUserPosition(fix));
   locationMgr.onError((kind) => {
     if (kind === 'denied') {
@@ -167,6 +169,7 @@ async function boot(): Promise<void> {
   });
   map.onFollowChange((on) => shell.setLocateActive(on));
   shell.locateBtn.addEventListener('click', async () => {
+    void compass.start(true);
     if (map.follow) {
       map.setFollow(false);
       return;
