@@ -386,6 +386,13 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
     const legs = kind === 'route' ? describeLegs(res) : '';
     if (legs) lines.push(legs);
     setStatus(lines.length ? el('div', { class: 'muted small', text: lines.join(' ') }) : null);
+    if (kind === 'route' && origin && dest && res.candidates.some((c) => c.parts?.some((p) => p.kind === 'straight'))) {
+      const from = origin, to = dest.lonlat;
+      setStatus(el('div', {},
+        el('div', { class: 'muted small', text: lines.join(' ') }),
+        el('button', { class: 'btn ghost small', type: 'button', onclick: () => void offerDownload(from, to) }, 'Download wider area…'),
+      ));
+    }
     renderTitle();
     renderSlider();
     cands.scrollTop = 0; // a new result starts at the top of the list (the first candidate is the selected one)
@@ -463,7 +470,7 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
     const centre: LonLat = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2];
     const span = distanceM(from[0], from[1], to[0], to[1]);
     const radiusKm = radius ?? Math.min(8, Math.max(3, Math.ceil(span / 2000) + 1));
-    const box = el('div', { class: 'download-offer' }, el('div', { class: 'name', text: loopTarget ? 'More road coverage is needed to search this loop length' : 'No routing data for this area yet' }));
+    const box = el('div', { class: 'download-offer' }, el('div', { class: 'name', text: loopTarget ? 'More road coverage is needed to search this loop length' : result ? 'Download road coverage for this journey' : 'No routing data for this area yet' }));
     if (loopTarget) box.appendChild(el('div', { class: 'muted small', text: navigator.onLine === false ? 'Connect to the internet to download the missing roads.' : 'Download the wider area in sections. Longer loops need more data; completed sections are saved for next time.' }));
     let regions: string[] = [];
     try {
@@ -520,6 +527,10 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
     box.appendChild(
       el('button', { class: `btn ${regions.length ? 'ghost' : 'primary'}`, type: 'button', onclick: () => void runDownload('Downloading area', (cb) => loopTarget ? ctx.engines.route.downloadLoopArea(centre, loopTarget, ctx.engines.proxy(cb)) : ctx.engines.route.downloadArea(centre, radiusKm, ctx.engines.proxy(cb))) }, loopTarget ? `Download roads for ${fmtDistanceTidy(loopTarget * 1000, units())} loops` : `Download this area (${radiusKm} km around here)`),
     );
+    if (!loopTarget) {
+      box.appendChild(el('button', { class: 'btn primary', type: 'button', onclick: () => void runDownload('Downloading wider area', (cb) => ctx.engines.route.downloadRouteArea(from, to, ctx.engines.proxy(cb))) }, 'Download wider area for this route'));
+      box.appendChild(el('div', { class: 'muted small', text: 'Covers the journey in sections, reuses saved roads, and resumes interrupted downloads. This can take time for long journeys.' }));
+    }
     // A→B without any street data can still be a straight line to follow (a loop cannot).
     if (kind === 'route') box.appendChild(el('button', { class: 'btn ghost', type: 'button', onclick: () => void routeAnyway(from, to) }, 'Route anyway (straight line)'));
     box.append(progress, progressText);

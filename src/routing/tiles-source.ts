@@ -338,6 +338,22 @@ export class TileSource {
     return (await db?.get('tiles', tileKeyOf(x, y)))?.areaId === `loop-tile:${x}/${y}`;
   }
 
+  /** Legacy area downloads can contain clipped edge tiles; only reuse known complete sources. */
+  async hasCompleteTile(x: number, y: number): Promise<boolean> {
+    if (await this.hasCompleteLoopTile(x, y)) return true;
+    if (await this.fallback?.hasTile(x, y)) return true;
+    const region = this.prebuilt.get(tileKeyOf(x, y));
+    if (!region || !this.fetchFn) return false;
+    try {
+      const res = await this.fetchFn(this.tileUrl(region.region, x, y));
+      if (!res.ok) return false;
+      this.remember(tileKeyOf(x, y), unpackGraphTile(new Uint8Array(await res.arrayBuffer())));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async deleteDownload(id: string): Promise<void> {
     const db = await this.openDb();
     if (!db) return;
