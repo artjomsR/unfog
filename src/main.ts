@@ -159,7 +159,11 @@ async function boot(): Promise<void> {
   };
 
   // ---- location → map
-  const compass = new Compass((heading) => map.setCompassHeading(heading));
+  const compass = new Compass((heading) => map.setCompassHeading(heading), (stale) => {
+    shell.locateBtn.classList.toggle('compass-stale', stale);
+    const label = stale ? 'Motion & orientation unavailable — tap to retry' : 'My location';
+    shell.locateBtn.setAttribute('aria-label', label);
+  });
   locationMgr.onFix((fix) => map.setUserPosition(fix));
   locationMgr.onError((kind) => {
     if (kind === 'denied') {
@@ -169,9 +173,10 @@ async function boot(): Promise<void> {
   });
   map.onFollowChange((on) => shell.setLocateActive(on));
   shell.locateBtn.addEventListener('click', async () => {
+    const retryingCompass = compass.stale;
     void compass.start(true);
     if (map.follow) {
-      map.setFollow(false);
+      if (!retryingCompass) map.setFollow(false);
       return;
     }
     const ok = await ctx.requestLocation();

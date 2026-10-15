@@ -16,7 +16,7 @@ afterEach(() => {
 
 describe('compass heading', () => {
   it.each(['granted', 'denied'])('remembers %s but checks browser permission in a new session', async (decision) => {
-    vi.stubGlobal('window', Object.assign(new EventTarget(), { clearTimeout }));
+    vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout, clearTimeout }));
     vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible' }));
     const requestPermission = vi.fn().mockResolvedValue(decision);
     vi.stubGlobal('DeviceOrientationEvent', { requestPermission });
@@ -73,7 +73,7 @@ describe('compass heading', () => {
 
   it.each(['reject', 'denied'])('allows a location tap to recover when automatic restoration returns %s', async (failure) => {
     localStorage.setItem('unfog.compass-permission', 'granted');
-    vi.stubGlobal('window', Object.assign(new EventTarget(), { clearTimeout }));
+    vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout, clearTimeout }));
     vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible' }));
     const requestPermission = vi.fn();
     if (failure === 'reject') requestPermission.mockRejectedValueOnce(new DOMException('Needs a gesture', 'NotAllowedError'));
@@ -91,7 +91,7 @@ describe('compass heading', () => {
   });
 
   it('does not repeat failed prompts or depend on writable storage', async () => {
-    vi.stubGlobal('window', Object.assign(new EventTarget(), { clearTimeout }));
+    vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout, clearTimeout }));
     vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible' }));
     vi.stubGlobal('localStorage', {
       getItem: () => { throw new Error('blocked'); },
@@ -138,7 +138,8 @@ describe('compass heading', () => {
     vi.stubGlobal('document', doc);
     vi.stubGlobal('DeviceOrientationEvent', { requestPermission });
     const onHeading = vi.fn();
-    const compass = new Compass(onHeading);
+    const onStale = vi.fn();
+    const compass = new Compass(onHeading, onStale);
     const started = compass.start();
     expect(requestPermission).toHaveBeenCalledWith(true);
     await started;
@@ -147,12 +148,39 @@ describe('compass heading', () => {
     });
     win.dispatchEvent(event);
     expect(onHeading).toHaveBeenLastCalledWith(75);
+    expect(onStale).toHaveBeenLastCalledWith(false);
     vi.advanceTimersByTime(5000);
     expect(onHeading).toHaveBeenLastCalledWith(null);
+    expect(onStale).toHaveBeenLastCalledWith(true);
+    await compass.start(true);
+    expect(requestPermission).toHaveBeenCalledTimes(2);
+    expect(compass.stale).toBe(true);
+    win.dispatchEvent(event);
+    expect(compass.stale).toBe(false);
     doc.visibilityState = 'hidden';
     doc.dispatchEvent(new Event('visibilitychange'));
     onHeading.mockClear();
     win.dispatchEvent(event);
     expect(onHeading).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(5000);
+    expect(compass.stale).toBe(false);
+  });
+
+  it('flags a granted session that never delivers a usable reading', async () => {
+    vi.useFakeTimers();
+    const win = Object.assign(new EventTarget(), {
+      screen: { orientation: { angle: 0 } }, setTimeout, clearTimeout,
+    });
+    vi.stubGlobal('window', win);
+    vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible' }));
+    vi.stubGlobal('DeviceOrientationEvent', { requestPermission: vi.fn().mockResolvedValue('granted') });
+    const compass = new Compass(vi.fn());
+    await compass.start();
+    vi.advanceTimersByTime(4999);
+    expect(compass.stale).toBe(false);
+    win.dispatchEvent(Object.assign(new Event('deviceorientation'), { alpha: null, absolute: false }));
+    vi.advanceTimersByTime(1);
+    expect(compass.stale).toBe(true);
   });
 });
+

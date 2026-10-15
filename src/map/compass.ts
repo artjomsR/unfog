@@ -35,8 +35,12 @@ export class Compass {
   private expiry = 0;
   private permission = savedPermission();
   private attempted = false;
+  stale = false;
 
-  constructor(private readonly onHeading: (heading: number | null) => void) {
+  constructor(
+    private readonly onHeading: (heading: number | null) => void,
+    private readonly onStale: (stale: boolean) => void = () => {},
+  ) {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') this.restore();
       else this.sync();
@@ -76,7 +80,10 @@ export class Compass {
       const result = orientation.requestPermission ? await orientation.requestPermission(true) : 'granted';
       // Failure to restore is not a new user decision. Keep the preference and let the
       // next explicit location tap request access if iOS discarded its session grant.
-      if (restoring && result !== 'granted') return;
+      if (restoring && result !== 'granted') {
+        this.markStale();
+        return;
+      }
       this.permission = result === 'granted' ? 'granted' : 'denied';
       try {
         localStorage.setItem(PERMISSION_KEY, this.permission);
@@ -85,8 +92,10 @@ export class Compass {
       }
       this.enabled = this.permission === 'granted';
       this.sync();
+      if (!this.enabled) this.markStale();
     } catch {
       // GPS heading remains available if compass permission is denied or unsupported.
+      this.markStale();
     } finally {
       this.pending = false;
     }
@@ -98,10 +107,22 @@ export class Compass {
     const heading = compassHeading(event, angle);
     if (heading === null) return;
     this.enabled = true;
+    this.setStale(false);
     this.onHeading(heading);
     window.clearTimeout(this.expiry);
-    this.expiry = window.setTimeout(() => this.onHeading(null), 5000);
+    this.expiry = window.setTimeout(() => this.markStale(), 5000);
   };
+
+  private setStale(stale: boolean): void {
+    this.stale = stale;
+    this.onStale(stale);
+  }
+
+  private markStale(): void {
+    this.enabled = false;
+    this.onHeading(null);
+    this.setStale(true);
+  }
 
   private sync(): void {
     window.removeEventListener('deviceorientation', this.handle);
@@ -111,5 +132,7 @@ export class Compass {
     if ((!this.enabled && this.permission !== 'granted') || document.visibilityState !== 'visible') return;
     window.addEventListener('deviceorientation', this.handle);
     window.addEventListener('deviceorientationabsolute', this.handle);
+    // A grant does not guarantee that the browser will actually deliver readings.
+    this.expiry = window.setTimeout(() => this.markStale(), 5000);
   }
 }
