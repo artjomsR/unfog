@@ -483,10 +483,15 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
     const progress = el('div', { class: 'progress', hidden: true }, el('div', { class: 'bar' }));
     const progressText = el('div', { class: 'muted small' });
     const wakeNote = el('div', { class: 'muted small', hidden: true });
-    const runDownload = async (label: string, task: (onProgress: (p: { phase: string; done: number; total: number; note?: string }) => void) => Promise<unknown>) => {
+    const pause = el('button', { class: 'btn ghost', type: 'button', hidden: true, onclick: () => {
+      void ctx.engines.route.cancelAreaDownloads().catch(() => toast('Could not pause the download. Try again.'));
+    } }, 'Pause download');
+    const runDownload = async (label: string, task: (onProgress: (p: { phase: string; done: number; total: number; note?: string }) => void) => Promise<unknown>, persistent = false) => {
       progress.hidden = false;
       progressText.textContent = `${label}…`;
       for (const b of box.querySelectorAll('button')) b.disabled = true;
+      pause.hidden = !persistent;
+      pause.disabled = false;
       // Progress arrives on the callback's own MessagePort, the result on the worker's: a progress
       // event can land after the rejection and overwrite the error line, so ignore it once settled.
       let live = true;
@@ -496,7 +501,7 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
       });
       try {
         // Offline, the Overpass fetch would retry for minutes before failing: say so now.
-        if (navigator.onLine === false) throw new Error('No internet connection');
+        if (!persistent && navigator.onLine === false) throw new Error('No internet connection');
         await task((p) => {
           if (!live) return;
           const pct = p.total ? Math.round((100 * p.done) / p.total) : 0;
@@ -511,12 +516,13 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
         live = false;
         const err = e as Error;
         // EmptyAreaError (worker, name kept across Comlink): the server answered, the box has no streets.
-        progressText.textContent = err?.name === 'EmptyAreaError' ? String(err.message) : `Download failed: ${String(err?.message ?? e)}. Check your connection and try again.`;
+        progressText.textContent = err?.name === 'AbortError' ? 'Download paused. Completed sections are saved; tap Download to resume.' : err?.name === 'EmptyAreaError' ? String(err.message) : `Download failed: ${String(err?.message ?? e)}. ${persistent ? 'Completed sections are saved.' : 'Check your connection and try again.'}`;
         progress.hidden = true;
         for (const b of box.querySelectorAll('button')) b.disabled = false;
       } finally {
         releaseScreen();
         wakeNote.hidden = true;
+        pause.hidden = true;
       }
     };
     if (regions.length) {
@@ -534,15 +540,15 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
       }
     }
     box.appendChild(
-      el('button', { class: `btn ${regions.length ? 'ghost' : 'primary'}`, type: 'button', onclick: () => void runDownload('Downloading area', (cb) => loopTarget ? ctx.engines.route.downloadLoopArea(centre, loopTarget, ctx.engines.proxy(cb)) : ctx.engines.route.downloadArea(centre, radiusKm, ctx.engines.proxy(cb))) }, loopTarget ? `Download roads for ${fmtDistanceTidy(loopTarget * 1000, units())} loops` : `Download this area (${radiusKm} km around here)`),
+      el('button', { class: `btn ${regions.length ? 'ghost' : 'primary'}`, type: 'button', onclick: () => void runDownload('Downloading area', (cb) => loopTarget ? ctx.engines.route.downloadLoopArea(centre, loopTarget, ctx.engines.proxy(cb)) : ctx.engines.route.downloadArea(centre, radiusKm, ctx.engines.proxy(cb)), !!loopTarget) }, loopTarget ? `Download roads for ${fmtDistanceTidy(loopTarget * 1000, units())} loops` : `Download this area (${radiusKm} km around here)`),
     );
     if (!loopTarget) {
-      box.appendChild(el('button', { class: 'btn primary', type: 'button', onclick: () => void runDownload('Downloading wider area', (cb) => ctx.engines.route.downloadRouteArea(from, to, ctx.engines.proxy(cb))) }, 'Download wider area for this route'));
+      box.appendChild(el('button', { class: 'btn primary', type: 'button', onclick: () => void runDownload('Downloading wider area', (cb) => ctx.engines.route.downloadRouteArea(from, to, ctx.engines.proxy(cb)), true) }, 'Download wider area for this route'));
       box.appendChild(el('div', { class: 'muted small', text: 'Covers the journey in sections, reuses saved roads, and resumes interrupted downloads. This can take time for long journeys.' }));
     }
     // A→B without any street data can still be a straight line to follow (a loop cannot).
     if (kind === 'route') box.appendChild(el('button', { class: 'btn ghost', type: 'button', onclick: () => void routeAnyway(from, to) }, 'Route anyway (straight line)'));
-    box.append(progress, progressText, wakeNote);
+    box.append(progress, progressText, wakeNote, pause);
     setStatus(box);
   }
 

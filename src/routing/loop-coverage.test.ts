@@ -27,6 +27,28 @@ afterEach(async () => {
 });
 
 describe('long-loop coverage', () => {
+  it('pauses active and queued batches, then allows a fresh download', async () => {
+    const e = engine();
+    const fetch = vi.spyOn(overpass, 'fetchOverpassWays').mockImplementation((_bbox, opts) => new Promise((_resolve, reject) => {
+      const signal = opts!.signal!;
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }));
+    const first = e.downloadLoopArea(FROM, 28);
+    const second = e.downloadLoopArea(FROM, 28);
+    const rejected = Promise.all([
+      expect(first).rejects.toMatchObject({ name: 'AbortError' }),
+      expect(second).rejects.toMatchObject({ name: 'AbortError' }),
+    ]);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await e.cancelAreaDownloads();
+    await rejected;
+    expect(fetch).toHaveBeenCalledTimes(2);
+    fetch.mockResolvedValue([]);
+    await e.downloadLoopArea(FROM, 28);
+    const coverage = await e.coverage(loopBBox(FROM, 28));
+    expect(coverage.available).toBe(coverage.needed);
+  });
+
   it.each(['loop', 'route'] as const)('requires every search section even when the partial map can produce a %s', async (kind) => {
     const e = engine();
     const lattice = makeLattice({ size: 31, spacingM: 1000, origin: FROM });
@@ -113,9 +135,12 @@ describe('long-loop coverage', () => {
   it('downloads complete sections, remembers empty sea tiles, and resumes after failure', async () => {
     const e = engine();
     const fetch = vi.spyOn(overpass, 'fetchOverpassWays').mockResolvedValue([]);
-    fetch.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('connection lost'));
-    await expect(e.downloadLoopArea(FROM, 28)).rejects.toThrow('connection lost');
-    expect(await e.listDownloads()).toHaveLength(1);
+    fetch.mockResolvedValueOnce([]).mockImplementationOnce(async () => {
+      await vi.waitFor(async () => expect((await e.listDownloads()).length).toBeGreaterThan(0));
+      throw Object.assign(new Error('Bad query'), { status: 400 });
+    });
+    await expect(e.downloadLoopArea(FROM, 28)).rejects.toThrow('Bad query');
+    expect((await e.listDownloads()).length).toBeGreaterThan(0);
     const wanted = graphTilesFor(loopBBox(FROM, 28));
     await e.downloadLoopArea(FROM, 28);
     expect(fetch).toHaveBeenCalledTimes(wanted.length + 1);

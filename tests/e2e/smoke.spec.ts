@@ -279,17 +279,25 @@ test.describe('Unfog smoke (mock engines)', () => {
       const route = (window as unknown as { __unfog: { ctx: { engines: { route: RouteApi } } } }).__unfog.ctx.engines.route;
       const original = route.route.bind(route);
       let complete = false;
+      let attempts = 0;
+      let pauseDownload: (reason: Error) => void = () => {};
       route.route = (req) => complete ? original(req) : Promise.reject(Object.assign(new Error('Missing section'), { name: 'NoCoverageError' }));
       route.downloadRouteArea = async () => {
+        if (++attempts === 1) return new Promise((_resolve, reject) => { pauseDownload = reject; });
         complete = true;
         return { tiles: 1, bytes: 1000 };
       };
+      route.cancelAreaDownloads = async () => pauseDownload(Object.assign(new Error('Paused'), { name: 'AbortError' }));
     });
     await page.evaluate(() => (window as UnfogWindow).__unfog?.openRoute?.({ name: 'Domino Park', lonlat: [-73.9678, 40.7142] }));
     const sheet = page.locator('.sheet.route');
     await expect(sheet).toContainText('More road coverage is needed for this route');
     await expect(sheet.locator('.cand')).toHaveCount(0);
     await expect(sheet.getByRole('button', { name: 'Route anyway (straight line)' })).toBeVisible();
+    await sheet.getByRole('button', { name: 'Download wider area for this route', exact: true }).click();
+    await sheet.getByRole('button', { name: 'Pause download', exact: true }).click();
+    await expect(sheet).toContainText('Download paused. Completed sections are saved');
+    await expect(sheet.getByRole('button', { name: 'Pause download', exact: true })).toBeHidden();
     await sheet.getByRole('button', { name: 'Download wider area for this route', exact: true }).click();
     await expect(sheet.locator('.cand').first()).toBeVisible();
     await expect(sheet.locator('.download-offer')).toHaveCount(0);
