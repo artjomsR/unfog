@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { cellsAlong, distanceM } from '../grid/cell';
 import { overpassToTiles, type OverpassWay } from '../../tests/fixtures/routing/overpass-to-tiles';
@@ -17,7 +18,7 @@ import { cellKey, cellOf } from './pack-format';
 import { makeLattice } from '../../tests/fixtures/routing/lattice';
 import { fakePackServer, publishPacks } from '../../tests/fixtures/routing/pack-server';
 
-const FIXTURE = new URL('../../tests/fixtures/osm/williamsburg.json.gz', import.meta.url).pathname;
+const FIXTURE = fileURLToPath(new URL('../../tests/fixtures/osm/williamsburg.json.gz', import.meta.url));
 const HOME: [number, number] = [-73.9568, 40.7176];
 const DOMINO: [number, number] = [-73.9678, 40.7142];
 
@@ -141,7 +142,7 @@ describe('Williamsburg fixture', () => {
     console.log('[williamsburg bench]', JSON.stringify(bench));
   });
 
-  it('routes over published packs (coverage v2): no prebuilt region, no download, one coalesced round; the cache serves offline; a missing shard is the straight-line floor, a loop there stays NoCoverage', async () => {
+  it('routes over published packs and the offline cache; missing shards require a download for routes and loops', async () => {
     // Williamsburg as one pack on a "shard" URL; a second cell's pack is listed but not deployed (404).
     const first = [...inputs.values()][0];
     const wbCell = cellKey(...cellOf(first.tx, first.ty));
@@ -188,9 +189,10 @@ describe('Williamsburg fixture', () => {
     expect(again.candidates.map((c) => c.lengthM)).toEqual(res.candidates.map((c) => c.lengthM));
     await offline.tiles.close();
     await offline.packs.close();
-    // The 404 cell: a route there is the straight-line floor, not an error; a loop cannot be.
+    // A listed but unavailable shard must not silently become a straight-line suggestion.
     server.fail = false;
-    const floor = await engine.route({ from: SEA_A, to: SEA_B, mode: 'walk', detour: 0.25 });
+    await expect(engine.route({ from: SEA_A, to: SEA_B, mode: 'walk', detour: 0.25 })).rejects.toMatchObject({ name: 'NoCoverageError' });
+    const floor = await engine.directLine({ from: SEA_A, to: SEA_B, mode: 'walk', detour: 0.25 });
     expect(floor.candidates.length).toBe(1);
     expect(floor.candidates[0].name).toBe('Direct');
     expect(floor.candidates[0].parts?.map((p) => p.kind)).toEqual(['straight']);

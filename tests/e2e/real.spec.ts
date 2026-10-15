@@ -1417,7 +1417,7 @@ test.describe('Unfog offline (vite preview + service worker)', () => {
     await openRoute(page, JAMAICA);
     const status = page.locator('.sheet.route .route-status');
     await expect(status.locator('.spinner')).toBeHidden({ timeout: 60_000 });
-    await expect(status).toContainText('No routing data for this area yet');
+    await expect(status).toContainText('More road coverage is needed for this route');
     await expect(status.getByRole('button', { name: /Download New York City/ })).toBeVisible();
     await expect(status.getByRole('button', { name: /Download this area/ })).toBeVisible();
     // Offline, the download fails with a message rather than a stuck progress bar.

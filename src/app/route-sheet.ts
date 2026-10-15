@@ -471,7 +471,7 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
     const centre: LonLat = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2];
     const span = distanceM(from[0], from[1], to[0], to[1]);
     const radiusKm = radius ?? Math.min(8, Math.max(3, Math.ceil(span / 2000) + 1));
-    const box = el('div', { class: 'download-offer' }, el('div', { class: 'name', text: loopTarget ? 'More road coverage is needed to search this loop length' : result ? 'Download road coverage for this journey' : 'No routing data for this area yet' }));
+    const box = el('div', { class: 'download-offer' }, el('div', { class: 'name', text: loopTarget ? 'More road coverage is needed to search this loop length' : result ? 'Download road coverage for this journey' : 'More road coverage is needed for this route' }));
     if (loopTarget) box.appendChild(el('div', { class: 'muted small', text: navigator.onLine === false ? 'Connect to the internet to download the missing roads.' : 'Download the wider area in sections. Longer loops need more data; completed sections are saved for next time.' }));
     let regions: string[] = [];
     try {

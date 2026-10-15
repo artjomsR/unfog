@@ -181,14 +181,12 @@ export interface RouteApi {
   listDownloads(): Promise<Array<{ id: string; center: LonLat; radiusKm: number; tiles: number; bytes: number; builtAt: string }>>;
   deleteDownload(id: string): Promise<void>;
   /**
-   * Always resolves with ≥ 1 candidate (Direct last) when any graph tile covers the request:
+   * Requires every graph tile in the search area before suggesting routes (Direct last):
    * pins snap to the nearest usable street up to 5 km away (the walk there is an `offroad` part),
    * and ends the network cannot join get a `straight` part between the two sides' nearest nodes
-   * instead of an error. Tiles a published pack covers are fetched first when online (coverage
-   * v2); when none could be loaded but a pack covers the box (offline with nothing cached, a shard
-   * not deployed yet) the result is the straight-line floor (`directLine`), not an error. Rejects,
-   * with `name` intact, only on NoCoverageError (no tiles and no pack at all) — `directLine` is the
-   * "route anyway" for that case.
+   * instead of an error. Published pack sections are fetched first when online. Any sections
+   * still missing cause NoCoverageError so the UI offers a download. `directLine` is the explicit
+   * "route anyway" option; missing coverage never silently becomes a straight-line suggestion.
    */
   route(req: RouteRequest): Promise<RouteResult>;
   /** The straight line between the pins as one Direct candidate, scored for novelty; needs no graph. */
@@ -198,6 +196,7 @@ export interface RouteApi {
    * per metre — with ties (same integer pctNew) broken towards the length closest to the target.
    * On a sparse rural network, where the strict generator finds nothing, a fallback answers within
    * ±40 % instead, and marks a round trip that walks out and back `kind: 'outback'`.
+   * Requires every graph tile in the search area; missing sections cause NoCoverageError.
    * May resolve with an empty list when no loop fits. Names are rank labels (see CandidateName).
    */
   loop(req: LoopRequest): Promise<RouteResult>;
