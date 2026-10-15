@@ -277,7 +277,7 @@ async function waitRouted(page: Page, timeout = 60_000): Promise<CandRow[]> {
 async function waitOffer(page: Page, timeout = 60_000): Promise<{ status: ReturnType<Page['locator']>; areaBtn: ReturnType<Page['locator']> }> {
   const status = page.locator('.sheet.route .route-status');
   await expect(status.locator('.spinner')).toBeHidden({ timeout });
-  await expect(status).toContainText('No routing data for this area yet', { timeout });
+  await expect(status).toContainText('More road coverage is needed for this route', { timeout });
   const areaBtn = status.getByRole('button', { name: /Download this area/ });
   await expect(areaBtn).toBeVisible();
   return { status, areaBtn };

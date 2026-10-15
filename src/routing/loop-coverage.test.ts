@@ -6,6 +6,7 @@ import { graphTilesFor } from './tiles-source';
 import { Graph } from './graph';
 import { decodeGraphTile, encodeGraphTile } from './graph-format';
 import { findLoops } from './loop';
+import { findCandidates } from './candidates';
 import * as overpass from './overpass';
 import { makeLattice } from '../../tests/fixtures/routing/lattice';
 
@@ -18,6 +19,7 @@ function engine() {
 }
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   for (const e of engines.splice(0)) {
     for (const d of await e.listDownloads()) await e.deleteDownload(d.id);
     await e.tiles.close();
@@ -25,6 +27,35 @@ afterEach(async () => {
 });
 
 describe('long-loop coverage', () => {
+  it.each(['loop', 'route'] as const)('requires every search section even when the partial map can produce a %s', async (kind) => {
+    const e = engine();
+    const lattice = makeLattice({ size: 31, spacingM: 1000, origin: FROM });
+    const from = lattice.at(15, 15), to = lattice.at(20, 15);
+    const loopReq = { from, targetKm: 28, mode: 'walk' as const };
+    const routeReq = { from, to, detour: 0.25, mode: 'walk' as const };
+    const bbox = kind === 'loop' ? loopBBox(from, 28) : routeBBox(from, to);
+    const [x, y] = graphTilesFor(bbox)[0];
+    const key = `${x}/${y}`, missing = lattice.tiles.get(key)!;
+    expect(missing).toBeDefined();
+    const partial = new Map(lattice.tiles);
+    partial.delete(key);
+    await e.tiles.storeArea({ id: 'partial', center: from, radiusKm: 20 }, partial);
+    // Prime the graph cache and prove the old behavior could silently return a suggestion.
+    const c = await e.graphFor(bbox);
+    const candidate = kind === 'loop' ? findLoops(c.graph, e.cells, loopReq) : findCandidates(c.graph, e.cells, routeReq);
+    expect(candidate.candidates.length).toBeGreaterThan(0);
+    const request = () => kind === 'loop' ? e.loop(loopReq) : e.route(routeReq);
+    await expect(request()).rejects.toMatchObject({ name: 'NoCoverageError', missingTiles: 1 });
+    // Check offline too, including after a previously complete graph has been cached.
+    vi.stubGlobal('navigator', { onLine: false });
+    await expect(request()).rejects.toMatchObject({ name: 'NoCoverageError' });
+    await e.tiles.storeArea({ id: 'remaining', center: from, radiusKm: 5 }, new Map([[key, missing]]));
+    expect((await request()).candidates.length).toBeGreaterThan(0);
+    await e.deleteDownload('remaining');
+    await expect(request()).rejects.toMatchObject({ name: 'NoCoverageError' });
+    if (kind === 'route') expect((await e.directLine(routeReq)).candidates[0].parts?.[0].kind).toBe('straight');
+  });
+
   it('uses at most two concurrent requests, with monotonic progress and no duplicate overlapping batches', async () => {
     const e = engine();
     let active = 0, peak = 0;

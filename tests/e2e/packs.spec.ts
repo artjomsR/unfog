@@ -2,7 +2,7 @@
  * Coverage v2 end to end — routing on published graph packs with no prebuilt region and no
  * downloaded area, the automatic prefetch around the user, the Data screen's "Routing data"
  * (list, sizes, Clear), offline routing from the pack cache, and a shard that is not deployed yet
- * (404) degrading to the straight-line floor with no error.
+ * (404) prompting for coverage, with an explicit straight-line option.
  *
  * Hermetic: headless Chromium on this machine cannot reach external hosts, so `context.route`
  * serves a fake packs-index.json on the app origin and the packs from sibling paths
@@ -330,25 +330,26 @@ test.describe('Coverage v2: graph packs', () => {
     await expect(data.locator('.packs-cell')).toHaveCount(1, { timeout: 15_000 });
   });
 
-  test('3. a cell whose shard is not deployed (404): the straight-line floor, no error, no prompt; outside every pack the download offer stays', async ({ page }) => {
+  test('3. an unavailable shard prompts for coverage; straight-line routing is explicit', async ({ page }) => {
     const host = await servePacks(page.context());
     const b = await boot(page);
     await openRoute(page, SEA);
+    const missing = page.locator('.sheet.route .route-status');
+    await expect(missing).toContainText('More road coverage is needed for this route');
+    await expect(page.locator('.sheet.route .cand')).toHaveCount(0);
+    await missing.getByRole('button', { name: /Route anyway/ }).click();
     const cands = await waitRouted(page);
     await expectNoPrompt(page);
     expect(cands).toHaveLength(1);
     expect(cands[0].name).toBe('Direct');
     await expect(page.locator('.sheet.route .route-status')).toContainText('as the crow flies');
     expect(host.log.filter((c) => c.status === 404).length).toBeGreaterThanOrEqual(1);
-    const floor = await page.evaluate((r) => (window as unknown as UnfogWindow).__unfog!.ctx!.engines.route.route(r), { from: SEA.origin, to: SEA.lonlat, mode: 'walk', detour: 0.25 });
-    expect(floor.graphTiles).toBe(0);
-    expect(floor.candidates[0].parts?.map((p) => p.kind)).toEqual(['straight']);
     await closeSheet(page);
     // Paris is in no pack: the pre-existing offer (Download this area / Route anyway), not a silent line.
     await openRoute(page, PARIS);
     const st = page.locator('.sheet.route .route-status');
     await expect(st.locator('.spinner')).toBeHidden({ timeout: 60_000 });
-    await expect(st).toContainText('No routing data for this area yet');
+    await expect(st).toContainText('More road coverage is needed for this route');
     await expect(st.getByRole('button', { name: /Download this area/ })).toBeVisible();
     await expect(st.getByRole('button', { name: /Route anyway/ })).toBeVisible();
     await expect(page.locator('.toast.error')).toHaveCount(0);

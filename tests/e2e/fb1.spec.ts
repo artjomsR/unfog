@@ -366,7 +366,7 @@ test('3b. no coverage at all: the download offer also has "Route anyway", which 
   const sheet = page.locator('.sheet.route');
   const status = sheet.locator('.route-status');
   await expect(status.locator('.spinner')).toBeHidden({ timeout: 60_000 });
-  await expect(status).toContainText('No routing data for this area yet');
+  await expect(status).toContainText('More road coverage is needed for this route');
   await expect(status.getByRole('button', { name: /Download this area/ })).toBeVisible();
   const anyway = status.getByRole('button', { name: 'Route anyway (straight line)' });
   await expect(anyway).toBeVisible();

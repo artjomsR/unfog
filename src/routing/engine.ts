@@ -91,9 +91,8 @@ function describeAttempt(error: unknown, delayMs: number | undefined, lastOnEndp
 }
 
 /**
- * No graph tile has data for the request. Crosses Comlink with name + message intact.
- * `packable` > 0 means a published pack covers the box but nothing could be loaded (offline with
- * nothing cached, or a shard not deployed yet): route() answers that with the straight-line floor.
+ * Required graph sections are missing. Crosses Comlink with name + message intact.
+ * `packable` counts sections available from published packs but not loaded on this device.
  */
 export class NoCoverageError extends Error {
   constructor(public missingTiles: number, public packable = 0) {
@@ -332,7 +331,7 @@ export class RouteEngine implements RouteApi {
    * nothing local holds are fetched from their packs first — one coalesced byte-range round per
    * pack, so a first route in a new city costs a couple of requests, not one per tile.
    */
-  async graphFor(bbox: BBox): Promise<CachedGraph> {
+  async graphFor(bbox: BBox, requireComplete = false): Promise<CachedGraph> {
     const tStart = now();
     if (!isOffline()) {
       const want = await this.tiles.missingLocally(bbox);
@@ -340,7 +339,9 @@ export class RouteEngine implements RouteApi {
     }
     const { tiles, keys, missing } = await this.tiles.tilesFor(bbox);
     const tilesMs = now() - tStart;
-    if (tiles.length === 0) throw new NoCoverageError(missing.length, (await this.tiles.coverage(bbox)).packable);
+    // Routes must not be selected from a smaller network just because some sections are missing.
+    // Check actual loaded tiles after pack fetching, before even reusing a cached graph.
+    if (tiles.length === 0 || (requireComplete && missing.length > 0)) throw new NoCoverageError(missing.length, (await this.tiles.coverage(bbox)).packable);
     const key = keys.join(',');
     const i = this.graphs.findIndex((c) => c.key === key);
     if (i >= 0) {
@@ -376,16 +377,7 @@ export class RouteEngine implements RouteApi {
   async route(req: RouteRequest): Promise<RouteResult> {
     const t0 = now();
     const bbox = routeBBox(req.from, req.to);
-    let c: CachedGraph;
-    try {
-      c = await this.graphFor(bbox);
-    } catch (e) {
-      // A pack covers this box but nothing loaded (offline with nothing cached, a shard not
-      // deployed yet): the straight-line floor, no prompt. Outside every pack the error stands
-      // and the sheet offers a download.
-      if (e instanceof NoCoverageError && e.packable > 0) return this.directLine(req);
-      throw e;
-    }
+    const c = await this.graphFor(bbox, true);
     const t1 = now();
     const prepared = (await this.prepareCells(c)) ?? 0;
     const t2 = now();
@@ -407,15 +399,11 @@ export class RouteEngine implements RouteApi {
   async loop(req: LoopRequest): Promise<RouteResult> {
     const t0 = now();
     const bbox = loopBBox(req.from, req.targetKm);
-    const c = await this.graphFor(bbox);
+    const c = await this.graphFor(bbox, true);
     const t1 = now();
     const prepared = (await this.prepareCells(c)) ?? 0;
     const t2 = now();
     const res = c.graph.nodeCount ? findLoops(c.graph, this.cells, req, { spatial: c.spatial, scorer: c.scorer, searcher: c.searcher, graphTiles: c.graph.tileKeys.length }) : { candidates: [], shortestM: req.targetKm * 1000, budgetM: req.targetKm * 1250, graphTiles: c.graph.tileKeys.length, ms: 0 };
-    if (!res.candidates.length) {
-      const { missing } = await this.tiles.tilesFor(bbox);
-      if (missing.length) throw new NoCoverageError(missing.length, (await this.tiles.coverage(bbox)).packable);
-    }
     res.ms = Math.round(now() - t0);
     this.recordPerf(c, t2 - t1, prepared, now() - t2, res.ms);
     return res;

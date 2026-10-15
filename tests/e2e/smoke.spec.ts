@@ -273,6 +273,28 @@ test.describe('Unfog smoke (mock engines)', () => {
     await expect(sheet.getByRole('button', { name: 'Download wider area…', exact: true })).toHaveCount(0);
   });
 
+  test('destination route with missing sections prompts before showing any suggestions', async ({ page }) => {
+    await boot(page);
+    await page.evaluate(() => {
+      const route = (window as unknown as { __unfog: { ctx: { engines: { route: RouteApi } } } }).__unfog.ctx.engines.route;
+      const original = route.route.bind(route);
+      let complete = false;
+      route.route = (req) => complete ? original(req) : Promise.reject(Object.assign(new Error('Missing section'), { name: 'NoCoverageError' }));
+      route.downloadRouteArea = async () => {
+        complete = true;
+        return { tiles: 1, bytes: 1000 };
+      };
+    });
+    await page.evaluate(() => (window as UnfogWindow).__unfog?.openRoute?.({ name: 'Domino Park', lonlat: [-73.9678, 40.7142] }));
+    const sheet = page.locator('.sheet.route');
+    await expect(sheet).toContainText('More road coverage is needed for this route');
+    await expect(sheet.locator('.cand')).toHaveCount(0);
+    await expect(sheet.getByRole('button', { name: 'Route anyway (straight line)' })).toBeVisible();
+    await sheet.getByRole('button', { name: 'Download wider area for this route', exact: true }).click();
+    await expect(sheet.locator('.cand').first()).toBeVisible();
+    await expect(sheet.locator('.download-offer')).toHaveCount(0);
+  });
+
   test('Data, Stats and Help screens open', async ({ page }) => {
     await boot(page);
     await page.getByRole('tab', { name: 'Data' }).click();
