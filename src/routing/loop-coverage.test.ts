@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RouteEngine, loopBBox } from './engine';
+import { RouteEngine, loopBBox, routeBBox } from './engine';
 import { MapCellLookup } from './cells';
 import { graphTilesFor } from './tiles-source';
 import { Graph } from './graph';
@@ -25,6 +25,53 @@ afterEach(async () => {
 });
 
 describe('long-loop coverage', () => {
+  it('uses at most two concurrent requests, with monotonic progress and no duplicate overlapping batches', async () => {
+    const e = engine();
+    let active = 0, peak = 0;
+    const fetch = vi.spyOn(overpass, 'fetchOverpassWays').mockImplementation(async () => {
+      peak = Math.max(peak, ++active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active--;
+      return [];
+    });
+    const progress: number[] = [];
+    await Promise.all([
+      e.downloadLoopArea(FROM, 28, p => progress.push(p.done)),
+      e.downloadLoopArea(FROM, 28),
+    ]);
+    const total = graphTilesFor(loopBBox(FROM, 28)).length;
+    expect(peak).toBe(2);
+    expect(active).toBe(0);
+    expect(fetch).toHaveBeenCalledTimes(total);
+    expect(progress.at(-1)).toBe(total);
+    expect(progress.every((v, i) => i === 0 || v >= progress[i - 1])).toBe(true);
+  });
+
+  it('downloads the full destination search area and reuses it on the next request', async () => {
+    const e = engine();
+    const to: [number, number] = [FROM[0] + 0.3, FROM[1]];
+    const fetch = vi.spyOn(overpass, 'fetchOverpassWays').mockResolvedValue([]);
+    await e.downloadRouteArea(FROM, to);
+    const coverage = await e.coverage(routeBBox(FROM, to));
+    expect(coverage.available).toBe(coverage.needed);
+    expect(coverage.needed).toBeGreaterThan(1);
+    fetch.mockClear();
+    await e.downloadRouteArea(FROM, to);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('reuses cached pack sections, but does not trust clipped legacy area tiles', async () => {
+    const e = engine();
+    const small = makeLattice({ size: 4, spacingM: 100, origin: FROM });
+    await e.tiles.storeArea({ id: 'legacy', center: FROM, radiusKm: 1 }, small.tiles);
+    const tile = [...small.tiles.values()][0];
+    expect(await e.tiles.hasCompleteTile(tile.tx, tile.ty)).toBe(false);
+    e.tiles.fallback = { hasTile: async () => true, getTile: async () => null, covers: () => true };
+    const fetch = vi.spyOn(overpass, 'fetchOverpassWays').mockResolvedValue([]);
+    await e.downloadLoopArea(FROM, 28);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('reports missing coverage instead of no loop on a small available graph', async () => {
     const e = engine();
     const small = makeLattice({ size: 4, spacingM: 100, origin: FROM });

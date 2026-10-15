@@ -173,6 +173,7 @@ export class RouteEngine implements RouteApi {
   readonly packs: PackSource;
   readonly cells: CellLookup & { prepare?(bbox: BBox): Promise<number>; invalidate?(): void };
   private readonly graphs: CachedGraph[] = [];
+  private areaDownloads: Promise<unknown> = Promise.resolve();
   private readonly graphCacheSize: number;
   private readonly packsIndexUrlFixed: boolean;
   cellVersion = 0;
@@ -219,22 +220,53 @@ export class RouteEngine implements RouteApi {
     return this.downloadBox(center, radiusKm, circleBBox(center, radiusKm), onProgress);
   }
 
-  /** Full graph tiles, one bounded request at a time. Completed sections survive interrupted downloads. */
+  /** Download the loop's full search area, preserving completed sections. */
   async downloadLoopArea(center: LonLat, targetKm: number, onProgress?: (p: DownloadProgress) => void): Promise<{ tiles: number; bytes: number }> {
-    const wanted = graphTilesFor(loopBBox(center, targetKm));
-    let tiles = 0, bytes = 0;
-    for (const [i, [x, y]] of wanted.entries()) {
-      if (!(await this.tiles.hasCompleteLoopTile(x, y))) {
-        const b = graphTileBounds(x, y);
-        const bbox: BBox = [b.west, b.south, b.east, b.north];
-        const mid: LonLat = [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2];
-        const r = await this.downloadBox(mid, distanceM(...mid, bbox[2], bbox[3]) / 1000, bbox, (p) => {
-          onProgress?.({ ...p, done: i, total: wanted.length, note: `Section ${i + 1} of ${wanted.length}${p.note ? ` · ${p.note}` : ''}` });
-        }, [x, y]);
-        tiles += r.tiles; bytes += r.bytes;
+    return this.queueAreaDownload(loopBBox(center, targetKm), onProgress);
+  }
+
+  async downloadRouteArea(from: LonLat, to: LonLat, onProgress?: (p: DownloadProgress) => void): Promise<{ tiles: number; bytes: number }> {
+    return this.queueAreaDownload(routeBBox(from, to), onProgress);
+  }
+
+  private queueAreaDownload(bbox: BBox, onProgress?: (p: DownloadProgress) => void): Promise<{ tiles: number; bytes: number }> {
+    // Overlapping UI requests share the same two-worker limit and recheck saved sections.
+    const task = this.areaDownloads.then(() => this.downloadSections(bbox, onProgress));
+    this.areaDownloads = task.catch(() => undefined);
+    return task;
+  }
+
+  private async downloadSections(area: BBox, onProgress?: (p: DownloadProgress) => void): Promise<{ tiles: number; bytes: number }> {
+    const wanted = graphTilesFor(area);
+    let tiles = 0, bytes = 0, next = 0, done = 0;
+    let failed = false;
+    let failure: unknown;
+    const worker = async () => {
+      while (!failed && next < wanted.length) {
+        const i = next++, [x, y] = wanted[i];
+        try {
+          if (await this.tiles.hasCompleteTile(x, y)) {
+            onProgress?.({ phase: 'store', done: ++done, total: wanted.length });
+            continue;
+          }
+          if (failed) return;
+          const b = graphTileBounds(x, y);
+          const bbox: BBox = [b.west, b.south, b.east, b.north];
+          const mid: LonLat = [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2];
+          const r = await this.downloadBox(mid, distanceM(...mid, bbox[2], bbox[3]) / 1000, bbox, (p) => {
+            onProgress?.({ ...p, done, total: wanted.length, note: `${done}/${wanted.length} sections ready · Section ${i + 1}${p.note ? ` · ${p.note}` : ''}` });
+          }, [x, y]);
+          tiles += r.tiles; bytes += r.bytes;
+          onProgress?.({ phase: 'store', done: ++done, total: wanted.length });
+        } catch (error) {
+          if (!failed) failure = error;
+          failed = true;
+        }
       }
-      onProgress?.({ phase: 'store', done: i + 1, total: wanted.length });
-    }
+    };
+    // Wait for both in-flight sections to settle before reporting failure or allowing a retry.
+    await Promise.all([worker(), worker()]);
+    if (failed) throw failure;
     return { tiles, bytes };
   }
 

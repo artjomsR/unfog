@@ -6,6 +6,7 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import path from 'node:path';
+import type { RouteApi } from '../../src/routing/api';
 
 const shots = path.join(path.dirname(new URL(import.meta.url).pathname), 'screenshots');
 const shot = (page: Page, name: string) => page.screenshot({ path: path.join(shots, `${name}.png`), fullPage: false });
@@ -237,6 +238,39 @@ test.describe('Unfog smoke (mock engines)', () => {
     await sheet.getByRole('button', { name: 'Download roads for 28 km loops' }).click();
     await expect(sheet.locator('.cand').first()).toBeVisible();
     await expect(sheet.locator('.download-offer')).toHaveCount(0);
+  });
+
+  test('destination route offers a resumable wider-area download for straight sections', async ({ page }) => {
+    await boot(page);
+    await page.evaluate(() => {
+      const route = (window as unknown as { __unfog: { ctx: { engines: { route: RouteApi } } } }).__unfog.ctx.engines.route;
+      const original = route.route.bind(route);
+      let attempts = 0, downloaded = false;
+      route.route = async (req) => {
+        const result = await original(req);
+        if (!downloaded) for (const c of result.candidates) {
+          c.parts = [{ kind: 'straight', coords: c.coords, lengthM: c.lengthM, newM: c.newM }];
+        }
+        return result;
+      };
+      route.downloadRouteArea = async (_from, to) => {
+        if (to[0] !== -73.9678) throw new Error('Wrong destination');
+        if (++attempts === 1) throw new Error('Connection lost');
+        downloaded = true;
+        return { tiles: 4, bytes: 1000 };
+      };
+    });
+    await page.evaluate(() => (window as UnfogWindow).__unfog?.openRoute?.({ name: 'Domino Park', lonlat: [-73.9678, 40.7142] }));
+    const sheet = page.locator('.sheet.route');
+    await sheet.getByRole('button', { name: 'Download wider area…', exact: true }).click();
+    const download = sheet.getByRole('button', { name: 'Download wider area for this route', exact: true });
+    await download.click();
+    await expect(sheet).toContainText('Connection lost');
+    await expect(download).toBeEnabled();
+    await download.click();
+    await expect(sheet.locator('.cand').first()).toBeVisible();
+    await expect(sheet.locator('.download-offer')).toHaveCount(0);
+    await expect(sheet.getByRole('button', { name: 'Download wider area…', exact: true })).toHaveCount(0);
   });
 
   test('Data, Stats and Help screens open', async ({ page }) => {
