@@ -10,7 +10,7 @@
  *
  * Since feedback-2 the session is passive (src/app/tracking.ts owns start/stop): it runs whenever
  * "Track my movement" is on and the app is open. A session left behind by a previous run (iOS
- * killed the app, an update reloaded it) is offered for resumption at the next boot.
+ * killed the app, an update reloaded it) resumes automatically at the next boot.
  * `saveUnfinishedSession` finalizes it only when the user chooses a fresh journey.
  * When that save fails (IndexedDB refused, the grid worker is slow) the session is moved aside to
  * `PENDING_SESSIONS_KEY` and retried at every boot; `SESSION_KEY` always belongs to the running

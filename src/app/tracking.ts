@@ -5,7 +5,7 @@
  * boot, the location watch pauses and resumes with the page's visibility (src/map/location.ts),
  * the wake lock is re-acquired on every return (src/record/session.ts) and every checkpoint
  * clears fog live. There is no Start/Stop and no summary sheet. Sessions roll over at local
- * midnight. After a relaunch, an unfinished journey is offered for resumption, preserving every
+ * midnight. After a relaunch, passive recording resumes silently; started routes offer recovery, preserving every
  * locally saved fix and leaving the unrecorded gap disconnected. The map shows a quiet status
  * pill; the Data screen lists the sessions.
  *
@@ -182,15 +182,22 @@ export function createTracking(ctx: AppContext, hooks: RecorderEvents, routeReco
       const unfinished = loadUnfinishedSession();
       const canResumeRecording = unfinished && !unfinished.ended && unfinished.points.length && getSettings().tracking && location.supported;
       const hasRoute = routeRecovery?.hasSavedJourney() ?? false;
-      if (canResumeRecording || hasRoute) {
+      // Passive GPS recording is automatic; only a deliberately started route needs a decision.
+      if (!hasRoute && canResumeRecording) {
+        const saved = await saveUnfinishedSession(ctx.engines.grid, true);
+        if (saved) await ctx.dataChanged();
+        await startSession(unfinished);
+        return;
+      }
+      if (hasRoute) {
         recoveryPending = true;
         renderPill();
         try {
           const resume = await confirmSheet({
             title: 'Resume your journey?',
-            body: hasRoute ? 'Your navigation route is saved on this device. Resume to bring it back on the map. Any unrecorded GPS gap will stay disconnected.' : `Your GPS recording from ${new Date(unfinished!.startMs).toLocaleString()} was interrupted. Resume recording or save it and start a new journey. The unrecorded gap will stay disconnected.`,
+            body: 'Your navigation route is saved on this device. Resume to bring it back on the map. Any unrecorded GPS gap will stay disconnected.',
             okLabel: 'Resume journey',
-            cancelLabel: hasRoute ? 'End journey' : 'Save and start new',
+            cancelLabel: 'End journey',
             dismissible: false,
           });
           if (resume) {

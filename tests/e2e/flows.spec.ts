@@ -813,7 +813,7 @@ test.describe('B. Service-worker update (v1 → v2 deploy)', () => {
 
     // Reload mid-session is not refused (tracking is always on): SKIP_WAITING → the new worker
     // activates + claims → controllerchange → one reload → v2. The session so far is saved as a
-    // track at the new boot after choosing to start a fresh journey.
+    // track at the new boot and passive recording resumes without a recovery dialog.
     const loadsBefore = await loads();
     await reloadBtn.click();
     await page.waitForFunction((n) => Number(sessionStorage.getItem('qa.loads') ?? 0) > n, loadsBefore, { timeout: 60_000 });
@@ -823,11 +823,10 @@ test.describe('B. Service-worker update (v1 → v2 deploy)', () => {
     expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.waiting ?? null), 'nothing left waiting').toBeNull();
     await page.waitForTimeout(3000);
     expect(await loads(), 'exactly one reload').toBe(loadsBefore + 1);
-    await page.getByRole('button', { name: 'Save and start new', exact: true }).click();
     await expect(page.locator('.sheet.modal')).toHaveCount(0);
     await expect(pill).toHaveText(/^Tracking/, { timeout: 20_000 });
     const relaunched = (await session(page))!;
-    expect(relaunched.id, 'a new session after the relaunch').not.toBe(before.id);
+    expect(relaunched.id, 'passive recording resumes silently after relaunch').toBe(before.id);
     await page.getByRole('tab', { name: 'Help' }).click();
     await expect(buildLine.locator('.build')).toHaveText(V2.stamp);
     await shot(page, 'sw-updated');
@@ -835,7 +834,7 @@ test.describe('B. Service-worker update (v1 → v2 deploy)', () => {
     const saved = tracks.filter((t) => t.source === 'session');
     expect(saved).toHaveLength(1);
     expect(saved[0].id).toBe(before.id);
-    expect(saved[0].points).toBe(during.points.length);
+    expect(saved[0].points).toBeGreaterThanOrEqual(during.points.length);
 
     // Precache integrity: exactly the v2 manifest, every precachable v2 file, nothing from v1.
     const manifest = precacheManifest(V2.dir);
