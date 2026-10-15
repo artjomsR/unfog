@@ -248,6 +248,7 @@ export function createMockRoute(synth: SynthCells): RouteApi {
     async downloadLoopArea(center, targetKm, onProgress) {
       return this.downloadArea(center, Math.max(1, targetKm / 2), onProgress);
     },
+    async cancelAreaDownloads() {},
     async downloadRouteArea(from, to, onProgress) {
       return this.downloadArea([(from[0] + to[0]) / 2, (from[1] + to[1]) / 2], Math.max(3, distanceM(...from, ...to) / 1000), onProgress);
     },

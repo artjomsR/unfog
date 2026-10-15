@@ -177,6 +177,8 @@ export interface RouteApi {
   downloadLoopArea(center: LonLat, targetKm: number, onProgress?: (p: DownloadProgress) => void): Promise<{ tiles: number; bytes: number }>;
   /** Download the wider search area for a destination route in resumable sections. */
   downloadRouteArea(from: LonLat, to: LonLat, onProgress?: (p: DownloadProgress) => void): Promise<{ tiles: number; bytes: number }>;
+  /** Pause active and queued section downloads; completed sections stay saved. */
+  cancelAreaDownloads(): Promise<void>;
   /** Downloaded (non-prebuilt) areas kept on device. */
   listDownloads(): Promise<Array<{ id: string; center: LonLat; radiusKm: number; tiles: number; bytes: number; builtAt: string }>>;
   deleteDownload(id: string): Promise<void>;

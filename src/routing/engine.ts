@@ -4,6 +4,7 @@
  * their tile set (with the spatial index, novelty cache and search workspace that go with it).
  */
 import { distanceM } from '../grid/cell';
+import { retrySectionFetch } from './download-retry';
 import type {
   BBox, CoverageReport, DownloadProgress, LonLat, LoopRequest, PackCacheStatus, PackFetchResult, RouteApi, RouteRequest, RouteResult,
 } from './api';
@@ -173,6 +174,8 @@ export class RouteEngine implements RouteApi {
   readonly cells: CellLookup & { prepare?(bbox: BBox): Promise<number>; invalidate?(): void };
   private readonly graphs: CachedGraph[] = [];
   private areaDownloads: Promise<unknown> = Promise.resolve();
+  private areaAbort: AbortController | null = null;
+  private areaGeneration = 0;
   private readonly graphCacheSize: number;
   private readonly packsIndexUrlFixed: boolean;
   cellVersion = 0;
@@ -230,12 +233,24 @@ export class RouteEngine implements RouteApi {
 
   private queueAreaDownload(bbox: BBox, onProgress?: (p: DownloadProgress) => void): Promise<{ tiles: number; bytes: number }> {
     // Overlapping UI requests share the same two-worker limit and recheck saved sections.
-    const task = this.areaDownloads.then(() => this.downloadSections(bbox, onProgress));
+    const generation = this.areaGeneration;
+    const task = this.areaDownloads.then(async () => {
+      if (generation !== this.areaGeneration) throw new DOMException('Download paused', 'AbortError');
+      const abort = new AbortController();
+      this.areaAbort = abort;
+      try { return await this.downloadSections(bbox, abort, onProgress); }
+      finally { this.areaAbort = null; }
+    });
     this.areaDownloads = task.catch(() => undefined);
     return task;
   }
 
-  private async downloadSections(area: BBox, onProgress?: (p: DownloadProgress) => void): Promise<{ tiles: number; bytes: number }> {
+  async cancelAreaDownloads(): Promise<void> {
+    this.areaGeneration++;
+    this.areaAbort?.abort(new DOMException('Download paused', 'AbortError'));
+  }
+
+  private async downloadSections(area: BBox, abort: AbortController, onProgress?: (p: DownloadProgress) => void): Promise<{ tiles: number; bytes: number }> {
     const wanted = graphTilesFor(area);
     let tiles = 0, bytes = 0, next = 0, done = 0;
     let failed = false;
@@ -244,6 +259,7 @@ export class RouteEngine implements RouteApi {
       while (!failed && next < wanted.length) {
         const i = next++, [x, y] = wanted[i];
         try {
+          abort.signal.throwIfAborted();
           if (await this.tiles.hasCompleteTile(x, y)) {
             onProgress?.({ phase: 'store', done: ++done, total: wanted.length });
             continue;
@@ -254,12 +270,13 @@ export class RouteEngine implements RouteApi {
           const mid: LonLat = [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2];
           const r = await this.downloadBox(mid, distanceM(...mid, bbox[2], bbox[3]) / 1000, bbox, (p) => {
             onProgress?.({ ...p, done, total: wanted.length, note: `${done}/${wanted.length} sections ready · Section ${i + 1}${p.note ? ` · ${p.note}` : ''}` });
-          }, [x, y]);
+          }, [x, y], abort.signal);
           tiles += r.tiles; bytes += r.bytes;
           onProgress?.({ phase: 'store', done: ++done, total: wanted.length });
         } catch (error) {
           if (!failed) failure = error;
           failed = true;
+          abort.abort(error);
         }
       }
     };
@@ -269,35 +286,43 @@ export class RouteEngine implements RouteApi {
     return { tiles, bytes };
   }
 
-  private async downloadBox(center: LonLat, radiusKm: number, bbox: BBox, onProgress?: (p: DownloadProgress) => void, fullTile?: [number, number]): Promise<{ tiles: number; bytes: number }> {
-    if (isOffline()) throw new OfflineError();
+  private async downloadBox(center: LonLat, radiusKm: number, bbox: BBox, onProgress?: (p: DownloadProgress) => void, fullTile?: [number, number], signal?: AbortSignal): Promise<{ tiles: number; bytes: number }> {
+    if (isOffline() && !signal) throw new OfflineError();
     // Agent D's modules (wave 1): imported lazily so the worker boots without them and tests do not depend on them.
     const [{ fetchOverpassWays, DEFAULT_OVERPASS_ENDPOINT, ALTERNATE_OVERPASS_ENDPOINTS }, { buildGraphTiles }] = await Promise.all([import('./overpass'), import('./graph-build')]);
     onProgress?.({ phase: 'fetch', done: 0, total: 1 });
     // Losing the connection mid-download aborts the retry loop at once instead of sleeping through it.
-    const abort = new AbortController();
-    const onOffline = () => abort.abort(new OfflineError());
-    const scope = globalThis as { addEventListener?: (t: string, cb: () => void) => void; removeEventListener?: (t: string, cb: () => void) => void };
-    scope.addEventListener?.('offline', onOffline);
-    const endpoints = [DEFAULT_OVERPASS_ENDPOINT, ...ALTERNATE_OVERPASS_ENDPOINTS];
-    let ways;
-    try {
-      ways = await fetchOverpassWays(bbox, {
-        signal: abort.signal,
-        timeoutS: OVERPASS_TIMEOUT_S,
-        fetch: fetchWithDeadline(OVERPASS_DEADLINE_MS, abort.signal),
-        retryDelaysMs: OVERPASS_RETRY_DELAYS_MS,
-        // Each failed attempt becomes a progress note so the sheet can say "busy — retrying in 15 s".
-        onAttempt: ({ endpoint, attempt, error }) => {
-          if (!error) return;
-          const lastOnEndpoint = attempt >= OVERPASS_RETRY_DELAYS_MS.length;
-          const lastEndpoint = endpoint === endpoints[endpoints.length - 1];
-          onProgress?.({ phase: 'fetch', done: 0, total: 1, note: describeAttempt(error, OVERPASS_RETRY_DELAYS_MS[attempt - 1], lastOnEndpoint, lastEndpoint) });
-        },
-      });
-    } finally {
-      scope.removeEventListener?.('offline', onOffline);
-    }
+    const fetchWays = async () => {
+      const abort = new AbortController();
+      const onCancel = () => abort.abort(signal?.reason);
+      signal?.addEventListener('abort', onCancel, { once: true });
+      if (signal?.aborted) onCancel();
+      const onOffline = () => abort.abort(new OfflineError());
+      const scope = globalThis as { addEventListener?: (t: string, cb: () => void) => void; removeEventListener?: (t: string, cb: () => void) => void };
+      scope.addEventListener?.('offline', onOffline);
+      const endpoints = [DEFAULT_OVERPASS_ENDPOINT, ...ALTERNATE_OVERPASS_ENDPOINTS];
+      try {
+        return await fetchOverpassWays(bbox, {
+          signal: abort.signal,
+          timeoutS: OVERPASS_TIMEOUT_S,
+          fetch: fetchWithDeadline(OVERPASS_DEADLINE_MS, abort.signal),
+          retryDelaysMs: OVERPASS_RETRY_DELAYS_MS,
+          // Each failed attempt becomes a progress note so the sheet can say "busy — retrying in 15 s".
+          onAttempt: ({ endpoint, attempt, error }) => {
+            if (!error) return;
+            const lastOnEndpoint = attempt >= OVERPASS_RETRY_DELAYS_MS.length;
+            const lastEndpoint = endpoint === endpoints[endpoints.length - 1];
+            const note = describeAttempt(error, OVERPASS_RETRY_DELAYS_MS[attempt - 1], lastOnEndpoint, lastEndpoint);
+            onProgress?.({ phase: 'fetch', done: 0, total: 1, note: signal ? note.replace('giving up', 'will keep retrying') : note });
+          },
+        });
+      } finally {
+        scope.removeEventListener?.('offline', onOffline);
+        signal?.removeEventListener('abort', onCancel);
+      }
+    };
+    const ways = signal ? await retrySectionFetch(fetchWays, signal, (note) => onProgress?.({ phase: 'fetch', done: 0, total: 1, note })) : await fetchWays();
+    signal?.throwIfAborted();
     onProgress?.({ phase: 'fetch', done: 1, total: 1 });
     onProgress?.({ phase: 'build', done: 0, total: 1 });
     const built = buildGraphTiles(ways);

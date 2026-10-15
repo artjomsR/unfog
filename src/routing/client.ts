@@ -40,6 +40,7 @@ export function wrapRouteApi(remote: Remote<RouteApi>, worker: Worker): RouteCli
     downloadArea: (center, radiusKm, onProgress) => remote.downloadArea(center, radiusKm, progress(onProgress)),
     downloadLoopArea: (center, targetKm, onProgress) => remote.downloadLoopArea(center, targetKm, progress(onProgress)),
     downloadRouteArea: (from, to, onProgress) => remote.downloadRouteArea(from, to, progress(onProgress)),
+    cancelAreaDownloads: () => remote.cancelAreaDownloads(),
     listDownloads: () => remote.listDownloads(),
     deleteDownload: (id) => remote.deleteDownload(id),
     route: (req) => remote.route(req),
