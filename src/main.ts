@@ -223,7 +223,7 @@ async function boot(): Promise<void> {
   // ---- boot-time checks
   void refreshStatChip();
   map.onReady(() => {
-    // Save whatever the previous run left, start tracking if the switch is on, then (first run)
+    // Offer recovery for an interrupted journey, start tracking if enabled, then (first run)
     // offer the switch — after the install card on iOS Safari, since installing starts over anyway.
     void tracking.resume().then(() => {
       const installCard = showInstallCardIfNeeded(ctx, () => tracking.offerIfNeeded());

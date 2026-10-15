@@ -143,7 +143,7 @@ export function createHelpScreen(ctx: AppContext): HelpScreen {
       bullets([
         'Unfog keeps the screen awake while it tracks (except in Low Power Mode). Lock the phone or switch apps and the trail pauses until you come back — see Always recording for why.',
         'GPS fixes worse than 50 m are skipped, so indoors or just after launch the pill may say "waiting for GPS" until you are outside.',
-        'Each day the app is open is one session (a fresh launch starts a new one). Data → Sessions lists them with GPX export for Fog of World’s Import folder.',
+        'Journeys are saved as you move. If the app closes before you turn tracking off, reopening offers Resume journey or Save and start new. Missing GPS stretches stay disconnected. Sessions roll over at midnight; Data → Sessions lists them with GPX export.',
         'Location is asked for when you flip the switch. If iOS says no, see Location not working.',
       ]),
     ),

@@ -10,7 +10,8 @@
  *
  * Since feedback-2 the session is passive (src/app/tracking.ts owns start/stop): it runs whenever
  * "Track my movement" is on and the app is open. A session left behind by a previous run (iOS
- * killed the app, an update reloaded it) is saved as a track at the next boot — `saveUnfinishedSession`.
+ * killed the app, an update reloaded it) is offered for resumption at the next boot.
+ * `saveUnfinishedSession` finalizes it only when the user chooses a fresh journey.
  * When that save fails (IndexedDB refused, the grid worker is slow) the session is moved aside to
  * `PENDING_SESSIONS_KEY` and retried at every boot; `SESSION_KEY` always belongs to the running
  * session, and `Recorder.start()` puts aside anything it finds there rather than overwrite it.
@@ -35,6 +36,8 @@ const MAX_SPEED_MPS = 60;
 export interface SessionState {
   id: string;
   startMs: number;
+  /** Written before final saving so a close during Stop never offers this journey again. */
+  ended?: boolean;
   /** Point indices that start a new segment after a GPS interruption. */
   breaks?: number[];
   /** [lon, lat, timeMs] accepted fixes. */
@@ -98,18 +101,22 @@ export function stashSession(s: SessionState): void {
  * own id like a Stop would (the checkpoints already counted most of it — the store is incremental),
  * then forgotten. Sessions whose save failed at an earlier boot are retried here too; whatever
  * still fails stays pending. Returns a track that was written (the left-behind session's when
- * there was one), or null when nothing was.
+ * there was one), or null when nothing was. With preserveCurrent, only retry pending saves;
+ * leave the current journey in place for resumption.
  */
-export async function saveUnfinishedSession(grid: GridApi): Promise<Track | null> {
+export async function saveUnfinishedSession(grid: GridApi, preserveCurrent = false): Promise<Track | null> {
   // First move the session out of SESSION_KEY: whatever happens next, a Recorder.start() must
   // not find it there and overwrite it (stash, then remove — a kill in between leaves both, and
   // the stash dedupes by id).
-  const left = loadUnfinishedSession();
+  const current = loadUnfinishedSession();
+  const left = preserveCurrent ? null : current;
   if (left) stashSession(left);
-  removeKey(SESSION_KEY);
+  if (!preserveCurrent) removeKey(SESSION_KEY);
   let saved: Track | null = null;
   const remaining: SessionState[] = [];
   for (const s of loadPendingSessions()) {
+    // The current copy is newer if a kill interrupted moving it into the pending queue.
+    if (preserveCurrent && s.id === current?.id) continue;
     const track = sessionTrack(s);
     try {
       await grid.markTrack(track);
@@ -190,6 +197,8 @@ export class Recorder {
   /** Stop: final markTrack (same id as the checkpoints), clear the persisted session. */
   async stop(): Promise<{ track: Track; state: SessionState } | null> {
     if (!this.state || this.status !== 'recording') return null;
+    this.state.ended = true;
+    this.persist();
     this.status = 'stopping';
     this.emit();
     this.teardown();

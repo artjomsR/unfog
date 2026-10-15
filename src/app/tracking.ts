@@ -5,20 +5,20 @@
  * boot, the location watch pauses and resumes with the page's visibility (src/map/location.ts),
  * the wake lock is re-acquired on every return (src/record/session.ts) and every checkpoint
  * clears fog live. There is no Start/Stop and no summary sheet. Sessions roll over at local
- * midnight and on every launch — the session a previous run left behind (iOS killed the app, an
- * update reloaded it) is saved as a track first, so a crash costs at most one checkpoint's worth
- * of points. The map shows only a quiet status pill; the Data screen lists the sessions.
+ * midnight. After a relaunch, an unfinished journey is offered for resumption, preserving every
+ * locally saved fix and leaving the unrecorded gap disconnected. The map shows a quiet status
+ * pill; the Data screen lists the sessions.
  *
  * iOS only lets a web app record while it is open and the screen is on; the Settings note and
  * Help → "Always recording" say so instead of pretending otherwise.
  */
-import { isSameLocalDay, saveUnfinishedSession, type RecorderEvents } from '../record/session';
+import { isSameLocalDay, loadUnfinishedSession, SESSION_KEY, saveUnfinishedSession, type SessionState, type RecorderEvents } from '../record/session';
 import type { AppContext } from './context';
 import { fmtInt } from './format';
 import { icons } from './icons';
 import { getSettings, readJSON, updateSettings, writeJSON } from './settings';
 import { TRACKING_OFFER_KEY } from './store-keys';
-import { el, svg, toast } from './ui';
+import { confirmSheet, el, svg, toast } from './ui';
 
 export interface TrackingController {
   /** The switch. */
@@ -30,7 +30,7 @@ export interface TrackingController {
    * Resolves to the resulting state (false when location was refused).
    */
   setEnabled(on: boolean): Promise<boolean>;
-  /** Boot: save the session a previous run left behind, then start one when the switch is on. */
+  /** Boot: offer to resume an interrupted journey, or save it and start a new one. */
   resume(): Promise<void>;
   /** First run: the "Track my movement?" card, once. */
   offerIfNeeded(): void;
@@ -50,6 +50,8 @@ export function createTracking(ctx: AppContext, hooks: RecorderEvents): Tracking
   const pill = el('button', { class: 'track-pill', type: 'button', hidden: true, onclick: () => ctx.openHelp('tracking') }, el('span', { class: 'dot' }), pillText);
   shell.bannerHost.appendChild(pill);
 
+  let recoveryPending = false;
+  let sessionDay = Date.now();
   let hadFix = false;
   let gpsNote = '';
   let wakeNote = '';
@@ -108,12 +110,13 @@ export function createTracking(ctx: AppContext, hooks: RecorderEvents): Tracking
     void checkRollover();
   });
 
-  async function startSession(): Promise<void> {
+  async function startSession(resume?: SessionState): Promise<void> {
     if (recorder.status !== 'idle') return;
     hadFix = false;
     gpsNote = '';
     locError = null;
-    await recorder.start();
+    sessionDay = Date.now();
+    await recorder.start(resume);
     renderPill();
   }
 
@@ -128,7 +131,7 @@ export function createTracking(ctx: AppContext, hooks: RecorderEvents): Tracking
   async function checkRollover(): Promise<void> {
     const s = recorder.state;
     if (!s || recorder.status !== 'recording') return;
-    if (isSameLocalDay(s.startMs, Date.now())) return;
+    if (isSameLocalDay(sessionDay, Date.now())) return;
     await api.rollover();
   }
   window.setInterval(() => void checkRollover(), ROLLOVER_CHECK_MS);
@@ -141,6 +144,7 @@ export function createTracking(ctx: AppContext, hooks: RecorderEvents): Tracking
       return recorder.status === 'recording';
     },
     async setEnabled(on) {
+      if (recoveryPending) return getSettings().tracking;
       if (on) {
         if (getSettings().tracking && recorder.status === 'recording') return true;
         const ok = await ctx.requestLocation(); // the prompt, from this gesture; a toast when refused
@@ -168,13 +172,39 @@ export function createTracking(ctx: AppContext, hooks: RecorderEvents): Tracking
         renderPill();
         return;
       }
+      if (recoveryPending || recorder.status !== 'idle') return;
+      const unfinished = loadUnfinishedSession();
+      if (unfinished && !unfinished.ended && unfinished.points.length && getSettings().tracking && location.supported) {
+        recoveryPending = true;
+        renderPill();
+        try {
+          const resume = await confirmSheet({
+            title: 'Resume your journey?',
+            body: `Your journey from ${new Date(unfinished.startMs).toLocaleString()} was interrupted. Its recorded route is saved on this device. Resume it or save it and start a new journey. The unrecorded gap will stay disconnected.`,
+            okLabel: 'Resume journey',
+            cancelLabel: 'Save and start new',
+            dismissible: false,
+          });
+          if (resume) {
+            const saved = await saveUnfinishedSession(ctx.engines.grid, true);
+            if (saved) await ctx.dataChanged();
+            await startSession(unfinished);
+            return;
+          }
+          // Persist the explicit decision before awaiting any database writes.
+          unfinished.ended = true;
+          writeJSON(SESSION_KEY, unfinished);
+        } finally {
+          recoveryPending = false;
+        }
+      }
       const saved = await saveUnfinishedSession(ctx.engines.grid);
       if (saved) await ctx.dataChanged();
       if (getSettings().tracking && location.supported) await startSession();
       renderPill();
     },
     offerIfNeeded() {
-      if (getSettings().tracking || readJSON<number>(TRACKING_OFFER_KEY, 0) || !location.supported) return;
+      if (recoveryPending || getSettings().tracking || readJSON<number>(TRACKING_OFFER_KEY, 0) || !location.supported) return;
       const dismiss = () => {
         writeJSON(TRACKING_OFFER_KEY, Date.now());
         card.remove();

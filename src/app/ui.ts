@@ -191,18 +191,23 @@ export interface ConfirmOptions {
   okLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
+  /** Require an explicit button choice instead of treating a backdrop tap as Cancel. */
+  dismissible?: boolean;
 }
 
 export function confirmSheet(opts: ConfirmOptions): Promise<boolean> {
   return new Promise((resolve) => {
+    let finished = false;
     const finish = (v: boolean) => {
+      if (finished) return;
+      finished = true;
       backdrop.classList.remove('show');
       window.setTimeout(() => backdrop.remove(), 220);
       resolve(v);
     };
     const backdrop = el(
       'div',
-      { class: 'backdrop', onclick: (e) => { if (e.target === backdrop) finish(false); } },
+      { class: 'backdrop', onclick: (e) => { if (e.target === backdrop && opts.dismissible !== false) finish(false); } },
       el(
         'div',
         { class: 'sheet modal', role: 'dialog', 'aria-modal': 'true' },

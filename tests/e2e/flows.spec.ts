@@ -813,7 +813,7 @@ test.describe('B. Service-worker update (v1 → v2 deploy)', () => {
 
     // Reload mid-session is not refused (tracking is always on): SKIP_WAITING → the new worker
     // activates + claims → controllerchange → one reload → v2. The session so far is saved as a
-    // track at the new boot and a fresh session is running, with no dialog.
+    // track at the new boot after choosing to start a fresh journey.
     const loadsBefore = await loads();
     await reloadBtn.click();
     await page.waitForFunction((n) => Number(sessionStorage.getItem('qa.loads') ?? 0) > n, loadsBefore, { timeout: 60_000 });
@@ -823,6 +823,7 @@ test.describe('B. Service-worker update (v1 → v2 deploy)', () => {
     expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.waiting ?? null), 'nothing left waiting').toBeNull();
     await page.waitForTimeout(3000);
     expect(await loads(), 'exactly one reload').toBe(loadsBefore + 1);
+    await page.getByRole('button', { name: 'Save and start new', exact: true }).click();
     await expect(page.locator('.sheet.modal')).toHaveCount(0);
     await expect(pill).toHaveText(/^Tracking/, { timeout: 20_000 });
     const relaunched = (await session(page))!;
