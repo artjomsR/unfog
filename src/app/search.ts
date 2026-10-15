@@ -56,6 +56,11 @@ export function createSearch(ctx: AppContext): SearchPanel {
         api.close();
         ctx.openLoop();
       }),
+      row(svg(icons.loop), 'Explore a loop from the map centre', 'Pan the map to choose where your round trip starts', () => {
+        const centre = ctx.map.center();
+        api.close();
+        ctx.openLoop(centre);
+      }),
       // A visible way in: drops the pin at the map centre (pan first), and names the hidden gesture.
       row(svg(icons.pin), 'Drop a pin at the map centre', 'Or touch and hold anywhere on the map', () => {
         const c = ctx.map.center();
