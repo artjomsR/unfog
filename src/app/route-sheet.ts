@@ -116,6 +116,7 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
   const bar = el(
     'div',
     { class: 'follow-bar', hidden: true },
+    el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Back to route overview', onclick: () => showOverview() }, svg(icons.back)),
     barSwatch,
     barText,
     el('button', { class: 'btn small', type: 'button', onclick: () => api.close() }, 'End'),
@@ -556,6 +557,19 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
     const dl = readJSON<RegionDownloads>(REGION_DL_KEY, {});
     dl[id] = { at: Date.now(), tiles: r.tiles, bytes: r.bytes };
     writeJSON(REGION_DL_KEY, dl);
+  }
+
+  /** Return to the existing choices and hand-off links without recalculating the route. */
+  function showOverview(): void {
+    if (!following || !result) return;
+    following = false;
+    map.setFollow(false);
+    bar.hidden = true;
+    sheet.hidden = false;
+    renderCands();
+    map.showRoutes(result.candidates, selected);
+    fit();
+    goBtn.focus({ preventScroll: true });
   }
 
   async function go(): Promise<void> {

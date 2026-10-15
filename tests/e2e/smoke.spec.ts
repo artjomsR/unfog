@@ -6,9 +6,10 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { RouteApi } from '../../src/routing/api';
 
-const shots = path.join(path.dirname(new URL(import.meta.url).pathname), 'screenshots');
+const shots = path.join(path.dirname(fileURLToPath(import.meta.url)), 'screenshots');
 const shot = (page: Page, name: string) => page.screenshot({ path: path.join(shots, `${name}.png`), fullPage: false });
 
 // The app exposes window.__unfog once the map is idle (src/main.ts); the shape is duplicated here
@@ -194,13 +195,25 @@ test.describe('Unfog smoke (mock engines)', () => {
     await expect(sheet.locator('.chips button.on')).toHaveCount(0);
     await expect(sheet.locator('.slider-loop')).toContainText('4.5 km');
 
-    // Go collapses to the follow bar naming the loop; End restores the chrome.
+    // Back restores the chosen loop and its hand-off links; Go can resume, End closes.
     await expect(sheet.locator('.cand').first()).toBeVisible({ timeout: 30_000 });
+    await expect(sheet.locator('.cand').nth(1).locator('.st')).toContainText('4.5 km');
+    await sheet.locator('.cand').nth(1).click();
+    const googleHref = await sheet.locator('a.gmaps').getAttribute('href');
     await sheet.getByRole('button', { name: 'Go' }).click();
     const bar = page.locator('.follow-bar');
     await expect(bar).toBeVisible();
-    await expect(bar).toContainText('Loop A');
+    await expect(bar).toContainText('Loop B');
     await expect(bar).toContainText('round trip from here');
+    await bar.getByRole('button', { name: 'Back to route overview' }).click();
+    await expect(bar).toBeHidden();
+    await expect(sheet).toBeVisible();
+    await expect(sheet.locator('.cand.on .name')).toHaveText('Loop B');
+    await expect(sheet.locator('a.gmaps')).toBeVisible();
+    await expect(sheet.locator('a.gmaps')).toHaveAttribute('href', googleHref!);
+    await sheet.getByRole('button', { name: 'Go' }).click();
+    await expect(bar).toBeVisible();
+    await expect(bar).toContainText('Loop B');
     await bar.getByRole('button', { name: 'End' }).click();
     await expect(bar).toBeHidden();
     await expect(page.locator('.search .ph')).toHaveText('Where to?');
