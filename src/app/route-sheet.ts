@@ -17,6 +17,7 @@
 import type { LonLat, RouteCandidate, RouteResult } from '../routing/api';
 import type { Mode } from '../routing/graph-format';
 import { distanceM } from '../grid/cell';
+import { keepDownloadScreenAwake } from './download-wake-lock';
 import { candidateColors } from '../map/routes';
 import type { AppContext, Destination } from './context';
 import { fmtDistance, fmtDistanceTidy, fmtMinutes } from './format';
@@ -481,6 +482,7 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
     }
     const progress = el('div', { class: 'progress', hidden: true }, el('div', { class: 'bar' }));
     const progressText = el('div', { class: 'muted small' });
+    const wakeNote = el('div', { class: 'muted small', hidden: true });
     const runDownload = async (label: string, task: (onProgress: (p: { phase: string; done: number; total: number; note?: string }) => void) => Promise<unknown>) => {
       progress.hidden = false;
       progressText.textContent = `${label}…`;
@@ -488,6 +490,10 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
       // Progress arrives on the callback's own MessagePort, the result on the worker's: a progress
       // event can land after the rejection and overwrite the error line, so ignore it once settled.
       let live = true;
+      const releaseScreen = keepDownloadScreenAwake((awake) => {
+        wakeNote.hidden = awake;
+        wakeNote.textContent = awake ? '' : 'Automatic screen wake is unavailable. Keep the screen on and this app visible while downloading.';
+      });
       try {
         // Offline, the Overpass fetch would retry for minutes before failing: say so now.
         if (navigator.onLine === false) throw new Error('No internet connection');
@@ -508,6 +514,9 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
         progressText.textContent = err?.name === 'EmptyAreaError' ? String(err.message) : `Download failed: ${String(err?.message ?? e)}. Check your connection and try again.`;
         progress.hidden = true;
         for (const b of box.querySelectorAll('button')) b.disabled = false;
+      } finally {
+        releaseScreen();
+        wakeNote.hidden = true;
       }
     };
     if (regions.length) {
@@ -533,7 +542,7 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
     }
     // A→B without any street data can still be a straight line to follow (a loop cannot).
     if (kind === 'route') box.appendChild(el('button', { class: 'btn ghost', type: 'button', onclick: () => void routeAnyway(from, to) }, 'Route anyway (straight line)'));
-    box.append(progress, progressText);
+    box.append(progress, progressText, wakeNote);
     setStatus(box);
   }
 
