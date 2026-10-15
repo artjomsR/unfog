@@ -86,6 +86,7 @@ export function countNonZero(u8: Uint8Array): number {
 /** Build the persisted track record (parallel Float64Arrays, length, time range). */
 export function trackToRecord(track: Track, gapM = DEFAULT_RASTER.gapM): TrackRecord {
   const n = track.points.length;
+  const breaks = new Set(track.breaks);
   const lon = new Float64Array(n), lat = new Float64Array(n), t = new Float64Array(n);
   let lengthM = 0, startMs = Infinity, endMs = -Infinity;
   for (let i = 0; i < n; i++) {
@@ -94,12 +95,13 @@ export function trackToRecord(track: Track, gapM = DEFAULT_RASTER.gapM): TrackRe
     const ti = p[2];
     t[i] = typeof ti === 'number' && Number.isFinite(ti) ? ti : NaN;
     if (!Number.isNaN(t[i])) { if (t[i] < startMs) startMs = t[i]; if (t[i] > endMs) endMs = t[i]; }
-    if (i > 0) {
+    if (i > 0 && !breaks.has(i)) {
       const d = distanceM(lon[i - 1], lat[i - 1], lon[i], lat[i]);
       if (d <= gapM) lengthM += d; // a gap is a break, not distance travelled
     }
   }
   const rec: TrackRecord = { id: track.id, source: track.source, lon, lat, t, lengthM };
+  if (track.breaks) rec.breaks = [...track.breaks];
   if (track.name !== undefined) rec.name = track.name;
   if (startMs !== Infinity) { rec.startMs = startMs; rec.endMs = endMs; }
   return rec;
@@ -112,6 +114,7 @@ export function recordToTrack(rec: TrackRecord): Track {
     points[i] = Number.isNaN(ti) ? [rec.lon[i], rec.lat[i]] : [rec.lon[i], rec.lat[i], ti];
   }
   const track: Track = { id: rec.id, source: rec.source, points };
+  if (rec.breaks) track.breaks = [...rec.breaks];
   if (rec.name !== undefined) track.name = rec.name;
   return track;
 }
@@ -666,10 +669,10 @@ export class CellStore implements CellTileProvider {
     const db = this.db as GridDb;
     const pendingIdx = this.pendingTracks.findIndex((r) => r.id === track.id);
     const previous = pendingIdx >= 0 ? this.pendingTracks[pendingIdx] : await db.get('tracks', track.id);
-    let raster = rasterizeTrack(track.points);
+    let raster = rasterizeTrack(track.points, { breaks: track.breaks });
     if (previous) {
       // What the earlier version already counted; re-rasterising is deterministic and cheap.
-      raster = subtractRaster(raster, rasterizeTrack(recordToTrack(previous).points));
+      raster = subtractRaster(raster, rasterizeTrack(recordToTrack(previous).points, { breaks: previous.breaks }));
     }
     let changed = false;
     for (const [key, idx] of raster) {

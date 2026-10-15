@@ -40,6 +40,8 @@ export interface BackupTrackJson {
   id: string;
   source: string;
   name?: string;
+  /** Point indices that start a new segment after a GPS interruption. */
+  breaks?: number[];
   lon: number[];
   lat: number[];
   t: Array<number | null>;
@@ -68,6 +70,7 @@ export function trackRecordToJson(rec: TrackRecord): BackupTrackJson {
   const t: Array<number | null> = new Array(rec.t.length);
   for (let i = 0; i < rec.t.length; i++) t[i] = Number.isNaN(rec.t[i]) ? null : rec.t[i];
   const j: BackupTrackJson = { id: rec.id, source: rec.source, lon: Array.from(rec.lon), lat: Array.from(rec.lat), t, lengthM: rec.lengthM };
+  if (rec.breaks) j.breaks = [...rec.breaks];
   if (rec.name !== undefined) j.name = rec.name;
   if (rec.startMs !== undefined) j.startMs = rec.startMs;
   if (rec.endMs !== undefined) j.endMs = rec.endMs;
@@ -80,6 +83,7 @@ export function jsonToTrackRecord(j: BackupTrackJson): TrackRecord {
   const t = new Float64Array(n);
   for (let i = 0; i < n; i++) { const v = j.t?.[i]; t[i] = typeof v === 'number' ? v : NaN; }
   const rec: TrackRecord = { id: String(j.id), source: String(j.source ?? 'backup'), lon: Float64Array.from(j.lon), lat: Float64Array.from(j.lat), t, lengthM: Number(j.lengthM) || 0 };
+  if (Array.isArray(j.breaks)) rec.breaks = j.breaks.filter((i) => Number.isInteger(i) && i > 0 && i < n);
   if (j.name !== undefined) rec.name = j.name;
   if (typeof j.startMs === 'number') rec.startMs = j.startMs;
   if (typeof j.endMs === 'number') rec.endMs = j.endMs;

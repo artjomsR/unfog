@@ -125,10 +125,11 @@ export function tileBounds(level: number, tx: number, ty: number): { west: numbe
  */
 export function cellsAlong(
   points: ReadonlyArray<readonly [lon: number, lat: number]>,
-  opts: { stepM?: number; gapM?: number } = {},
+  opts: { stepM?: number; gapM?: number; breaks?: readonly number[] } = {},
 ): Array<[cx: number, cy: number]> {
   const stepM = opts.stepM ?? 4;
   const gapM = opts.gapM ?? 500;
+  const breaks = new Set(opts.breaks);
   const out: Array<[number, number]> = [];
   let lastKey = -1;
   const push = (cx: number, cy: number) => {
@@ -137,7 +138,7 @@ export function cellsAlong(
   };
   for (let i = 0; i < points.length; i++) {
     const [lon, lat] = points[i];
-    if (i === 0) { const [cx, cy] = lonLatToCell(lon, lat); push(cx, cy); continue; }
+    if (i === 0 || breaks.has(i)) { const [cx, cy] = lonLatToCell(lon, lat); push(cx, cy); continue; }
     const [plon, plat] = points[i - 1];
     const d = distanceM(plon, plat, lon, lat);
     if (d > gapM) { const [cx, cy] = lonLatToCell(lon, lat); lastKey = -1; push(cx, cy); continue; }

@@ -57,6 +57,8 @@ export interface Track {
   /** e.g. 'gpx', 'timeline', 'session', 'fow' */
   source: string;
   name?: string;
+  /** Point indices that start a new segment after a GPS interruption. */
+  breaks?: number[];
   /** [lon, lat, timeMs?] */
   points: Array<[number, number, number?]>;
 }

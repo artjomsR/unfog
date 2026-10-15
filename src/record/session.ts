@@ -14,8 +14,7 @@
  * When that save fails (IndexedDB refused, the grid worker is slow) the session is moved aside to
  * `PENDING_SESSIONS_KEY` and retried at every boot; `SESSION_KEY` always belongs to the running
  * session, and `Recorder.start()` puts aside anything it finds there rather than overwrite it.
- * The location watch pauses while the page is hidden (src/map/location.ts) and the grid breaks a
- * track on gaps > 500 m (src/grid/cell.ts), so a pause never draws a straight line.
+ * Explicit segment breaks preserve GPS interruptions, including pauses while the page is hidden.
  */
 import type { ApplyResult, GridApi } from '../grid/api';
 import { cellsAlong, cellToTile, cellIndex, distanceM } from '../grid/cell';
@@ -36,6 +35,8 @@ const MAX_SPEED_MPS = 60;
 export interface SessionState {
   id: string;
   startMs: number;
+  /** Point indices that start a new segment after a GPS interruption. */
+  breaks?: number[];
   /** [lon, lat, timeMs] accepted fixes. */
   points: Array<[number, number, number]>;
   distanceM: number;
@@ -62,7 +63,7 @@ export function loadUnfinishedSession(): SessionState | null {
 }
 
 export function sessionTrack(state: SessionState): Track {
-  return { id: state.id, source: 'session', name: sessionName(state), points: state.points };
+  return { id: state.id, source: 'session', name: sessionName(state), points: state.points, breaks: state.breaks };
 }
 
 export function sessionName(state: SessionState): string {
@@ -129,6 +130,9 @@ export class Recorder {
   wakeLockOk = false;
   private lock: WakeLockSentinel | null = null;
   private unsubFix: (() => void) | null = null;
+  private unsubError: (() => void) | null = null;
+  private breakPending = false;
+  private lastFixMs: number | null = null;
   private checkpointTimer = 0;
   private sessionCells = new Set<number>();
   private tileSnapshots = new Map<string, Promise<Uint8Array | null>>();
@@ -142,7 +146,9 @@ export class Recorder {
     private readonly events: RecorderEvents,
   ) {
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && this.status === 'recording') void this.keepAwake();
+      if (this.status !== 'recording') return;
+      if (document.visibilityState === 'visible') void this.keepAwake();
+      else this.breakPending = true;
     });
   }
 
@@ -166,12 +172,15 @@ export class Recorder {
       dropped: 0,
     };
     this.status = 'recording';
+    this.breakPending = !!resume?.points.length;
+    this.lastFixMs = null;
     this.sessionCells.clear();
     this.tileSnapshots.clear();
     this.pointsAtCheckpoint = 0; // a resumed session is re-marked once (incremental in the store)
-    if (resume) for (const [cx, cy] of cellsAlong(resume.points.map((p) => [p[0], p[1]] as [number, number]))) this.sessionCells.add(cy * 4194304 + cx);
+    if (resume) for (const [cx, cy] of cellsAlong(resume.points.map((p) => [p[0], p[1]] as [number, number]), { breaks: resume.breaks })) this.sessionCells.add(cy * 4194304 + cx);
     this.persist();
     this.unsubFix = this.location.onFix((f) => this.onFix(f));
+    this.unsubError = this.location.onError(() => { this.breakPending = true; });
     this.location.retain('record');
     await this.keepAwake();
     this.checkpointTimer = window.setInterval(() => void this.checkpoint(), CHECKPOINT_MS);
@@ -212,6 +221,8 @@ export class Recorder {
   private teardown(): void {
     this.unsubFix?.();
     this.unsubFix = null;
+    this.unsubError?.();
+    this.unsubError = null;
     this.location.release('record');
     window.clearInterval(this.checkpointTimer);
     this.checkpointTimer = 0;
@@ -244,8 +255,14 @@ export class Recorder {
   private onFix(fix: Fix): void {
     const s = this.state;
     if (!s || this.status !== 'recording') return;
+    if (document.visibilityState !== 'visible') { this.breakPending = true; return; }
+    // Ignore stale callbacks; silence longer than the watch timeout also breaks continuity.
+    if (this.lastFixMs !== null && fix.timeMs <= this.lastFixMs) return;
+    if (this.lastFixMs !== null && fix.timeMs - this.lastFixMs > 30_000) this.breakPending = true;
+    this.lastFixMs = fix.timeMs;
     let accepted = fix.accuracy <= MAX_ACCURACY_M;
-    const last = s.points[s.points.length - 1];
+    if (!accepted) this.breakPending = true;
+    const last = this.breakPending ? undefined : s.points[s.points.length - 1];
     let d = 0;
     if (accepted && last) {
       d = distanceM(last[0], last[1], fix.lon, fix.lat);
@@ -261,6 +278,8 @@ export class Recorder {
       this.emit();
       return;
     }
+    if (this.breakPending && s.points.length) (s.breaks ??= []).push(s.points.length);
+    this.breakPending = false;
     s.points.push([fix.lon, fix.lat, fix.timeMs]);
     if (last && d < 500) s.distanceM += d;
     if (last) this.countNewCells(last, [fix.lon, fix.lat]);

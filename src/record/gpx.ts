@@ -21,7 +21,9 @@ export function trackToGpx(track: Track, name = track.name ?? 'Unfog session'): 
   lines.push('  <trk>');
   lines.push(`    <name>${esc(name)}</name>`);
   lines.push('    <trkseg>');
-  for (const [lon, lat, t] of track.points) {
+  const breaks = new Set(track.breaks);
+  for (const [i, [lon, lat, t]] of track.points.entries()) {
+    if (i > 0 && breaks.has(i)) lines.push('    </trkseg>', '    <trkseg>');
     const time = t ? `<time>${new Date(t).toISOString()}</time>` : '';
     lines.push(`      <trkpt lat="${lat.toFixed(7)}" lon="${lon.toFixed(7)}">${time}</trkpt>`);
   }

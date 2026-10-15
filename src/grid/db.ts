@@ -53,6 +53,8 @@ export interface TrackRecord {
   /** 'gpx' | 'timeline' | 'session' | 'fow' | … */
   source: string;
   name?: string;
+  /** Point indices that start a new segment after a GPS interruption. */
+  breaks?: number[];
   lon: Float64Array;
   lat: Float64Array;
   /** ms since epoch per point, NaN when unknown. */

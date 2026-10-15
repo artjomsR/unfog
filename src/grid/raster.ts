@@ -12,11 +12,12 @@ import { cellsAlong, tileKey, TILE_MASK, TILE_SHIFT, TILE_SIZE } from './cell';
 export interface RasterOptions {
   /** Sampling step along the polyline (m). Default 3. */
   stepM?: number;
+  breaks?: readonly number[];
   /** Consecutive fixes further apart than this are not joined (m). Default 500. */
   gapM?: number;
 }
 
-export const DEFAULT_RASTER: Required<RasterOptions> = { stepM: 3, gapM: 500 };
+export const DEFAULT_RASTER: Required<RasterOptions> = { stepM: 3, gapM: 500, breaks: [] };
 
 /**
  * Rasterise a polyline of [lon, lat, …] points. Returns a map keyed by `tileKey(14, tx, ty)`
@@ -29,7 +30,7 @@ export function rasterizeTrack(
   const stepM = opts.stepM ?? DEFAULT_RASTER.stepM;
   const gapM = opts.gapM ?? DEFAULT_RASTER.gapM;
   // cellsAlong only reads [0] and [1]; a 3-tuple is structurally fine but not assignable.
-  const cells = cellsAlong(points as ReadonlyArray<readonly [number, number]>, { stepM, gapM });
+  const cells = cellsAlong(points as ReadonlyArray<readonly [number, number]>, { stepM, gapM, breaks: opts.breaks });
   const perTile = new Map<number, Set<number>>();
   for (let i = 0; i < cells.length; i++) {
     const cx = cells[i][0], cy = cells[i][1];
