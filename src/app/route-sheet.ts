@@ -20,7 +20,7 @@ import type { AppContext, Destination } from './context';
 import { fmtDistance, fmtDistanceTidy, fmtMinutes } from './format';
 import { DEFAULT_SPLIT, appleMapsUrl, googleMapsUrl, partLabel, routeGpxFileName, routeToGpx, splitCandidate } from './handoff';
 import { icons } from './icons';
-import { readJSON, writeJSON } from './settings';
+import { readJSON, removeKey, writeJSON } from './settings';
 import { shareOrDownload } from './share';
 import { REGION_DL_KEY, ROUTE_PREFS_KEY, type RegionDownloads } from './store-keys';
 import { clear, debounce, el, svg, toast } from './ui';
@@ -32,9 +32,31 @@ export interface RouteSheet {
   /** Loop mode: round trips from `from` (default: the user's position, else the map centre). */
   openLoop(from?: LonLat): void;
   close(): void;
+  hasSavedJourney(): boolean;
+  restoreJourney(): void;
+  discardSavedJourney(): void;
   readonly isOpen: boolean;
   readonly following: boolean;
   readonly kind: SheetKind | null;
+}
+
+const ACTIVE_ROUTE_KEY = 'unfog.activeRoute';
+interface SavedRoute {
+  kind: SheetKind;
+  dest: Destination | null;
+  origin: LonLat | null;
+  loopFrom: LonLat | null;
+  result: RouteResult;
+  selected: number;
+  prefs: Prefs;
+}
+function loadJourney(): SavedRoute | null {
+  const saved = readJSON<SavedRoute | null>(ACTIVE_ROUTE_KEY, null);
+  if (!saved || !['route', 'loop'].includes(saved.kind) || !saved.prefs ||
+      !Array.isArray(saved.result?.candidates) || !Number.isInteger(saved.selected) ||
+      !saved.result.candidates[saved.selected]?.coords?.length ||
+      (saved.kind === 'route' && !saved.dest?.lonlat)) return null;
+  return saved;
 }
 
 interface Prefs {
@@ -71,6 +93,11 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
   let seq = 0;
   let open = false;
   let following = false;
+  let journeyStarted = false;
+
+  function persistJourney(): void {
+    if (journeyStarted && kind && result) writeJSON(ACTIVE_ROUTE_KEY, { kind, dest, origin, loopFrom, result, selected, prefs } satisfies SavedRoute);
+  }
 
   // ---- DOM
   const title = el('h2');
@@ -298,6 +325,7 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
 
   function select(i: number): void {
     selected = i;
+    persistJourney();
     renderCands();
     if (result) map.showRoutes(result.candidates, selected);
   }
@@ -588,7 +616,18 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
 
   async function go(): Promise<void> {
     if (!result || !result.candidates[selected]) return;
+    journeyStarted = true;
+    persistJourney();
+    showFollowing();
+    const my = seq;
     const ok = await ctx.requestLocation();
+    if (my !== seq || !following) return;
+    if (ok) map.setFollow(true, 16.5);
+    else toast('Showing the route without your location -- tap the locate button to see yourself on it. End closes it.');
+  }
+
+  function showFollowing(): void {
+    if (!result) return;
     const c = result.candidates[selected];
     following = true;
     sheet.hidden = true;
@@ -600,8 +639,6 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
       el('div', { class: 'st', text: `${Math.round(c.pctNew)}% new · ${kind === 'loop' ? 'round trip from here' : dest?.name ?? ''}` }),
     );
     map.showRoutes([c], 0);
-    if (ok) map.setFollow(true, 16.5);
-    else toast('Showing the route without your location — tap the locate button to see yourself on it. End closes it.');
   }
 
   const rerun = debounce(() => void run(), 350);
@@ -623,7 +660,9 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
   });
 
   /** Common start of open() / openLoop(): show the sheet, take over the search pill. */
-  function begin(k: SheetKind, pillText: string): void {
+  function begin(k: SheetKind, pillText: string, calculate = true): void {
+    seq++;
+    if (calculate) { journeyStarted = false; removeKey(ACTIVE_ROUTE_KEY); }
     kind = k;
     open = true;
     following = false;
@@ -640,7 +679,7 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
     renderTitle();
     renderControls();
     renderCands();
-    void run();
+    if (calculate) void run();
   }
 
   const api: RouteSheet = {
@@ -665,7 +704,34 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
       map.setDestination(null);
       begin('loop', 'Loop from here');
     },
+    hasSavedJourney: () => loadJourney() !== null,
+    discardSavedJourney() { removeKey(ACTIVE_ROUTE_KEY); },
+    restoreJourney() {
+      const saved = loadJourney();
+      if (!saved) return;
+      Object.assign(prefs, saved.prefs);
+      dest = saved.dest;
+      origin = saved.origin;
+      loopFrom = saved.loopFrom;
+      shell.showTab('map');
+      map.setDestination(dest?.lonlat ?? null);
+      begin(saved.kind, dest?.name ?? 'Loop from here', false);
+      showResult(saved.result);
+      selected = saved.selected;
+      journeyStarted = true;
+      renderCands();
+      showFollowing();
+      // Draw the stored geometry immediately, even offline or without a new GPS fix.
+      map.fitCoords(saved.result.candidates[selected].coords, { top: shell.top.offsetHeight + 12, bottom: 100, left: 32, right: 32 });
+      toast('Journey resumed: your saved route is back on the map.', { kind: 'success' });
+      const my = seq;
+      void ctx.requestLocation().then((ok) => {
+        if (ok && my === seq && following) map.setFollow(true, 16.5);
+      });
+    },
     close() {
+      journeyStarted = false;
+      removeKey(ACTIVE_ROUTE_KEY);
       if (!open) return;
       open = false;
       following = false;

@@ -201,7 +201,7 @@ async function boot(): Promise<void> {
   // ---- UI modules
   const search = createSearch(ctx);
   routeSheet = createRouteSheet(ctx);
-  tracking = createTracking(ctx, recordHooks);
+  tracking = createTracking(ctx, recordHooks, routeSheet);
   // Always recording (src/sync): Fog of World via Dropbox + Overland, pulled on open / rollover / every 15 min.
   const sync = createSync(ctx);
   const dataScreen = createDataScreen(ctx);

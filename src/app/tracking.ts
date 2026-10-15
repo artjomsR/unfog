@@ -42,7 +42,13 @@ export interface TrackingController {
 const POOR_ACCURACY_M = 50;
 const ROLLOVER_CHECK_MS = 60_000;
 
-export function createTracking(ctx: AppContext, hooks: RecorderEvents): TrackingController {
+interface RouteRecovery {
+  hasSavedJourney(): boolean;
+  restoreJourney(): void;
+  discardSavedJourney(): void;
+}
+
+export function createTracking(ctx: AppContext, hooks: RecorderEvents, routeRecovery?: RouteRecovery): TrackingController {
   const { shell, recorder, location } = ctx;
 
   // ---- status pill: the only trace of tracking on the map (top-left, under the search pill).
@@ -174,26 +180,32 @@ export function createTracking(ctx: AppContext, hooks: RecorderEvents): Tracking
       }
       if (recoveryPending || recorder.status !== 'idle') return;
       const unfinished = loadUnfinishedSession();
-      if (unfinished && !unfinished.ended && unfinished.points.length && getSettings().tracking && location.supported) {
+      const canResumeRecording = unfinished && !unfinished.ended && unfinished.points.length && getSettings().tracking && location.supported;
+      const hasRoute = routeRecovery?.hasSavedJourney() ?? false;
+      if (canResumeRecording || hasRoute) {
         recoveryPending = true;
         renderPill();
         try {
           const resume = await confirmSheet({
             title: 'Resume your journey?',
-            body: `Your journey from ${new Date(unfinished.startMs).toLocaleString()} was interrupted. Its recorded route is saved on this device. Resume it or save it and start a new journey. The unrecorded gap will stay disconnected.`,
+            body: hasRoute ? 'Your navigation route is saved on this device. Resume to bring it back on the map. Any unrecorded GPS gap will stay disconnected.' : `Your GPS recording from ${new Date(unfinished!.startMs).toLocaleString()} was interrupted. Resume recording or save it and start a new journey. The unrecorded gap will stay disconnected.`,
             okLabel: 'Resume journey',
-            cancelLabel: 'Save and start new',
+            cancelLabel: hasRoute ? 'End journey' : 'Save and start new',
             dismissible: false,
           });
           if (resume) {
-            const saved = await saveUnfinishedSession(ctx.engines.grid, true);
+            routeRecovery?.restoreJourney();
+            const saved = await saveUnfinishedSession(ctx.engines.grid, !!canResumeRecording);
             if (saved) await ctx.dataChanged();
-            await startSession(unfinished);
+            if (getSettings().tracking && location.supported) await startSession(canResumeRecording ? unfinished! : undefined);
             return;
           }
+          routeRecovery?.discardSavedJourney();
           // Persist the explicit decision before awaiting any database writes.
-          unfinished.ended = true;
-          writeJSON(SESSION_KEY, unfinished);
+          if (unfinished) {
+            unfinished.ended = true;
+            writeJSON(SESSION_KEY, unfinished);
+          }
         } finally {
           recoveryPending = false;
         }
