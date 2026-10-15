@@ -185,7 +185,7 @@ export function createHelpScreen(ctx: AppContext): HelpScreen {
       'What the routes do',
       p('Pick a destination, and Unfog searches the street map for routes that spend as much distance as possible on streets you have never been on — within the detour budget you set.'),
       bullets([
-        'Routes follow paths where they exist — streets, footpaths, stairs, park paths, in either direction — and straight lines where they don’t (drawn dashed, with the off-path distance noted). Times are at walking pace.',
+        'Choose Walking or Cycling for routes and loops. Cycling respects bicycle access and one-way restrictions, discourages sections requiring dismounting, and estimates riding and walking time. Routes follow mapped paths where available; dashed straight lines have no mapped path.',
         'Detour budget: +25% means any candidate may be up to 25% longer than the shortest route.',
         '"% new" is the share of the route on never-visited streets; "unexplored" is that distance.',
         'Most new maximises unexplored distance; Balanced trades a little; Direct is the shortest and is always shown.',

@@ -229,6 +229,8 @@ html.dark .chip, html.dark .hint, html.dark .track-pill { box-shadow: var(--shad
 .icon-btn:active { background: var(--bg-2); }
 /* One line on what a route is (where the mode chips were). */
 .sheet-note { margin: 6px 0 12px; padding-right: 32px; }
+.travel-modes { margin-bottom: 12px; }
+.travel-modes button { flex: 1; }
 /* Loop mode: length presets above the slider. */
 .chips { display: flex; gap: 8px; margin: 2px 0 8px; }
 .chips button { flex: 1; appearance: none; border: 0; background: var(--bg-2); color: var(--fg-2); font-size: 0.824rem; font-weight: 600; min-height: 34px; border-radius: 10px; padding: 0 8px; white-space: nowrap; }

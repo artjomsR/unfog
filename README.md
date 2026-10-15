@@ -24,12 +24,12 @@ Screenshots are the real app over sample walks in Williamsburg, Brooklyn (captur
   re-imports line up exactly), over a Map, Dark (night) or Satellite basemap (OpenFreeMap; Esri
   imagery with street names kept)
 - Novelty routing: a detour budget and 2–3 candidate routes with "% new"; routes follow paths
-  where they exist (streets, footpaths, stairs, either direction) and straight lines where they
-  don't, timed at walking pace
+  where they exist and straight lines where they don't. Choose Walking or Cycling, with matching
+  time estimates; cycling respects bicycle access and one-way restrictions and discourages dismounts
 - Loop mode ("Explore from here"): pick 2 / 3 / 5 / 8 km (or 1–15 km on the slider) and get up to
   three round trips from where you stand, sorted by unexplored distance
 - Hand-off to Google Maps: one tap opens the chosen route or loop in the Google Maps app for
-  turn-by-turn walking directions — its corners become checkpoints and long routes open in parts;
+  turn-by-turn walking or cycling directions — its corners become checkpoints and long routes open in parts;
   Apple Maps (destination only) and Save GPX for any other app
 - Street data that downloads itself: anywhere in North America the streets around you and along
   each route arrive in the background (Wi-Fi or mobile, paused in Low Data Mode) and stay on the

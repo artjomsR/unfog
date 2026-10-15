@@ -117,7 +117,7 @@ test.describe('Unfog smoke (mock engines)', () => {
     await page.getByRole('button', { name: 'Fog' }).click();
   });
 
-  test('search opens and the route sheet renders candidates (one travel mode, no chips)', async ({ page }) => {
+  test('search opens and the route sheet renders candidates (walking selected by default)', async ({ page }) => {
     await boot(page);
     await page.getByRole('button', { name: 'Search destination' }).click();
     await expect(page.locator('.search-panel')).toBeVisible();
@@ -132,8 +132,8 @@ test.describe('Unfog smoke (mock engines)', () => {
     const sheet = page.locator('.sheet.route');
     await expect(sheet).toBeVisible();
     await expect(sheet.locator('h2')).toContainText('Domino Park');
-    // Feedback-2: no Walk/Bike/Drive — one line says what a route is instead.
-    await expect(sheet.locator('.modes')).toHaveCount(0);
+    // Walking is the default travel mode.
+    await expect(sheet.getByRole('button', { name: 'Walking', exact: true })).toHaveAttribute('aria-pressed', 'true');
     for (const name of ['Walk', 'Bike', 'Drive']) await expect(sheet.getByRole('button', { name, exact: true })).toHaveCount(0);
     await expect(sheet.locator('.sheet-note')).toHaveText('Routes follow paths where they exist and straight lines where they don’t, timed at walking pace.');
     await expect(sheet.locator('.cand')).toHaveCount(3, { timeout: 30_000 });
@@ -156,6 +156,34 @@ test.describe('Unfog smoke (mock engines)', () => {
     await expect(page.locator('.stat-chip')).toBeVisible();
   });
 
+  test('cycling recalculates times and handoffs, persists after reload, and applies to loops', async ({ page }) => {
+    await boot(page);
+    const openDestination = () => page.evaluate(() => (window as UnfogWindow).__unfog!.openRoute!({ name: 'Domino Park', lonlat: [-73.9678, 40.7142] }));
+    await openDestination();
+    const sheet = page.locator('.sheet.route');
+    const stats = sheet.locator('.cand').last().locator('.st');
+    await expect(stats).toContainText('min');
+    const walkingStats = await stats.textContent();
+    await sheet.getByRole('button', { name: 'Cycling', exact: true }).click();
+    await expect(sheet.getByRole('button', { name: 'Cycling', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(stats).toContainText('min');
+    await expect(stats).not.toHaveText(walkingStats!);
+    await expect(sheet.locator('a.gmaps')).toHaveAttribute('href', /travelmode=bicycling/);
+    await expect(sheet.locator('a.amaps')).toHaveAttribute('href', /mode=cycling/);
+    await shot(page, 'cycling-route');
+    await page.reload();
+    await page.waitForFunction(() => (window as UnfogWindow).__unfog?.ready);
+    await openDestination();
+    await expect(sheet.getByRole('button', { name: 'Cycling', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(sheet.locator('a.gmaps')).toHaveAttribute('href', /travelmode=bicycling/);
+    await page.evaluate(() => (window as UnfogWindow).__unfog!.openLoop!());
+    await expect(sheet.locator('a.gmaps')).toHaveAttribute('href', /travelmode=bicycling/);
+    const cyclingLoopStats = await stats.textContent();
+    await sheet.getByRole('button', { name: 'Walking', exact: true }).click();
+    await expect(sheet.locator('a.gmaps')).toHaveAttribute('href', /travelmode=walking/);
+    await expect(stats).not.toHaveText(cyclingLoopStats!);
+  });
+
   test('loop mode: "Explore a loop from here" lists loops, chips + slider re-run, Go/End', async ({ page }) => {
     await boot(page);
     await page.getByRole('button', { name: 'Search destination' }).click();
@@ -164,7 +192,7 @@ test.describe('Unfog smoke (mock engines)', () => {
     const sheet = page.locator('.sheet.route.loop');
     await expect(sheet).toBeVisible();
     await expect(sheet.locator('h2')).toContainText('Explore from here');
-    await expect(sheet.locator('.modes')).toHaveCount(0);
+    await expect(sheet.getByRole('button', { name: 'Walking', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await expect(sheet.locator('.sheet-note')).toHaveText('Round trips on streets and paths, timed at walking pace.');
     await expect(sheet.locator('.chips button')).toHaveCount(4);
     await expect(sheet.locator('.chips button.on')).toHaveText('3 km');

@@ -298,6 +298,21 @@ describe('URLs', () => {
     expect(appleMapsUrl(at(400, 200), at(0, 0))).toBe('https://maps.apple.com/?saddr=40.71760,-73.95680&daddr=40.71941,-73.95206&dirflg=w');
   });
 
+  it('cycling handoffs preserve the origin and checkpoints and use cycling modes', () => {
+    const google = new URL(googleMapsUrl(part, { mode: 'bike', navigate: true }));
+    expect(google.searchParams.get('travelmode')).toBe('bicycling');
+    expect(google.searchParams.get('waypoints')!.split('|')).toHaveLength(2);
+    expect(google.searchParams.get('origin')).toBe(fmtLatLng(part.start));
+    expect(google.searchParams.get('dir_action')).toBe('navigate');
+    expect(new URL(googleMapsUrl(part, { mode: 'bike', originFromDevice: true })).searchParams.has('origin')).toBe(false);
+    const apple = new URL(appleMapsUrl(part.end, part.start, 'bike'));
+    expect(apple.pathname).toBe('/directions');
+    expect(apple.searchParams.get('mode')).toBe('cycling');
+    expect(apple.searchParams.get('source')).toBe(fmtLatLng(part.start));
+    expect(apple.searchParams.get('destination')).toBe(fmtLatLng(part.end));
+    expect(new URL(appleMapsUrl(part.end, undefined, 'bike')).searchParams.has('source')).toBe(false);
+  });
+
   it('formats coordinates lat first, never "-0.00000"', () => {
     expect(fmtLatLng([-0.0000001, 51.5])).toBe('51.50000,0.00000');
     expect(fmtLatLng([-122.4194155, 37.7749295])).toBe('37.77493,-122.41942');

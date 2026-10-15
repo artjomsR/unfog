@@ -599,7 +599,7 @@ test.describe('Unfog real engines', () => {
     expect(overlayErrors, 'no overlay/grid console errors').toEqual([]);
   });
 
-  test('3. route sheet on the real NYC graph: Direct, then novelty after marking it walked; one mode, slider, Go/End', async ({ page }) => {
+  test('3. route sheet on the real NYC graph: Direct, then novelty after marking it walked; walking, slider, Go/End', async ({ page }) => {
     const b = await boot(page);
     await openRoute(page, DOMINO_PARK);
     const sheet = page.locator('.sheet.route');
@@ -615,8 +615,8 @@ test.describe('Unfog real engines', () => {
     await expect(sheet.locator('.route-status')).not.toContainText('map centre'); // origin = the user's position
     // The selected row is the only pressed one (assistive tech reads the selection).
     await expect(sheet.locator('.cand[aria-pressed="true"]')).toHaveCount(1);
-    // Feedback-2: one travel mode — no Walk/Bike/Drive chips; a line says what a route is instead.
-    await expect(sheet.locator('.modes')).toHaveCount(0);
+    // Walking is the default travel mode.
+    await expect(sheet.getByRole('button', { name: 'Walking', exact: true })).toHaveAttribute('aria-pressed', 'true');
     for (const name of ['Walk', 'Bike', 'Drive']) await expect(sheet.getByRole('button', { name, exact: true })).toHaveCount(0);
     await expect(sheet.locator('.sheet-note')).toHaveText('Routes follow paths where they exist and straight lines where they don’t, timed at walking pace.');
     expect(direct!.etaMin, 'walking pace (4.8 km/h)').toBeGreaterThanOrEqual(Math.floor((direct!.lengthM / 1000 / 4.8) * 60));
@@ -677,10 +677,10 @@ test.describe('Unfog real engines', () => {
     expect(wide[wide.length - 1].name).toBe('Direct');
     expect(wide[0].lengthM).toBeLessThanOrEqual(direct2.lengthM * 1.6 + 30);
     test.info().annotations.push({ type: 'candidates-60pct', description: wide.map((c) => `${c.name} ${c.lengthM} m ${c.pctNew}% new`).join(' | ') });
-    // Persisted for the next sheet (no mode preference any more).
+    // Preferences persist for the next sheet.
     const prefs = await page.evaluate(() => JSON.parse(localStorage.getItem('unfog.routePrefs') ?? '{}'));
     expect(prefs).toMatchObject({ detour: 0.6 });
-    expect(prefs).not.toHaveProperty('mode');
+    expect(prefs).toHaveProperty('mode', 'walk');
 
     // Tapping a row selects it; Go collapses to the follow bar; End restores the chrome.
     await sheet.locator('.cand').last().click();
@@ -1084,7 +1084,7 @@ test.describe('Unfog real engines', () => {
     await expect(sheet).toHaveAttribute('data-kind', 'loop');
     await expect(sheet.locator('h2')).toContainText('Explore from here');
     await expect(sheet.locator('.chips button.on')).toHaveText('3 km');
-    await expect(sheet.locator('.modes')).toHaveCount(0); // feedback-2: one mode, no chips
+    await expect(sheet.getByRole('button', { name: 'Walking', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await expect(sheet.locator('.sheet-note')).toHaveText('Round trips on streets and paths, timed at walking pace.');
     await expect(page.locator('.search .val')).toHaveText('Loop from here');
     const loops = await waitRouted(page);

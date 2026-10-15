@@ -235,6 +235,7 @@ export function fmtLatLng(p: LonLat): string {
 }
 
 export interface GoogleMapsOptions {
+  mode?: 'walk' | 'bike';
   /** `dir_action=navigate`: turn-by-turn straight away when the origin is the phone's position (else a route preview). */
   navigate?: boolean;
   /**
@@ -254,13 +255,15 @@ export function googleMapsUrl(part: Pick<RoutePart, 'start' | 'end' | 'corners'>
   if (!opts.originFromDevice) q.push(`origin=${fmtLatLng(part.start)}`);
   q.push(`destination=${fmtLatLng(part.end)}`);
   if (part.corners.length) q.push(`waypoints=${part.corners.map(fmtLatLng).join('%7C')}`);
-  q.push('travelmode=walking');
+  q.push(`travelmode=${opts.mode === 'bike' ? 'bicycling' : 'walking'}`);
   if (opts.navigate) q.push('dir_action=navigate');
   return `https://www.google.com/maps/dir/?${q.join('&')}`;
 }
 
-/** Apple Maps walking directions to one point (no waypoints exist); from the device unless `origin` is given. */
-export function appleMapsUrl(destination: LonLat, origin?: LonLat): string {
+/** Apple Maps directions to one point; from the device unless `origin` is given. */
+export function appleMapsUrl(destination: LonLat, origin?: LonLat, mode: 'walk' | 'bike' = 'walk'): string {
+  // Cycling uses Apple's unified Maps URL; retain legacy walking links for older devices.
+  if (mode === 'bike') return `https://maps.apple.com/directions?${origin ? `source=${fmtLatLng(origin)}&` : ''}destination=${fmtLatLng(destination)}&mode=cycling`;
   return `https://maps.apple.com/?${origin ? `saddr=${fmtLatLng(origin)}&` : ''}daddr=${fmtLatLng(destination)}&dirflg=w`;
 }
 

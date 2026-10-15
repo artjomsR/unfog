@@ -6,16 +6,13 @@
  * chips + a 1–100 km slider) instead of the detour slider: `route.loop()` returns round trips from
  * the user's position (else the map centre), listed as Loop A / B / C and drawn like routes.
  *
- * One travel mode (feedback-2, data: "one mode, the most permissive"): every request goes to the
- * engine as `walk` — footpaths, stairs, both directions of every street — and times are at
- * walking pace. The Walk/Bike/Drive chips are gone; the engine keeps its Mode type for tools/tests.
+ * Walking and cycling share a saved travel-mode preference for routes and loops.
  *
  * Under Go, the hand-off block (feedback-3): the chosen route in Google Maps for turn-by-turn (in
  * parts when it needs more than 9 checkpoints — src/app/handoff.ts), Apple Maps (destination only),
  * or saved as GPX for any other app.
  */
 import type { LonLat, RouteCandidate, RouteResult } from '../routing/api';
-import type { Mode } from '../routing/graph-format';
 import { distanceM } from '../grid/cell';
 import { keepDownloadScreenAwake } from './download-wake-lock';
 import { candidateColors } from '../map/routes';
@@ -41,13 +38,11 @@ export interface RouteSheet {
 }
 
 interface Prefs {
+  mode: 'walk' | 'bike';
   detour: number;
   /** Loop-mode target length, km. */
   loopKm: number;
 }
-
-/** The one mode the app asks for: the most permissive network the engine has. */
-export const TRAVEL_MODE: Mode = 'walk';
 
 export const LOOP_CHIPS_KM = [2, 3, 5, 8];
 export const LOOP_KM = { min: 1, max: 100, step: 0.5, default: 3 };
@@ -57,6 +52,7 @@ function loadPrefs(): Prefs {
   const p = readJSON<Partial<Prefs>>(ROUTE_PREFS_KEY, {});
   const num = (v: unknown, lo: number, hi: number, dflt: number) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : dflt);
   return {
+    mode: p.mode === 'bike' ? 'bike' : 'walk',
     detour: num(p.detour, 0.1, 1, 0.25),
     loopKm: num(p.loopKm, LOOP_KM.min, LOOP_KM.max, LOOP_KM.default),
   };
@@ -79,7 +75,20 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
   // ---- DOM
   const title = el('h2');
   const closeBtn = el('button', { class: 'icon-btn sheet-close', type: 'button', 'aria-label': 'Close', onclick: () => api.close() }, svg(icons.close));
-  // What a route is, in one line (where the mode chips used to be). Off-path metres go in the status line.
+  const modeBtns = new Map<Prefs['mode'], HTMLButtonElement>();
+  const modes = el('div', { class: 'seg inline travel-modes', role: 'group', 'aria-label': 'Travel mode' });
+  for (const [mode, label] of [['walk', 'Walking'], ['bike', 'Cycling']] as const) {
+    const b = el('button', { type: 'button', 'aria-pressed': 'false', onclick: () => {
+      if (prefs.mode === mode) return;
+      prefs.mode = mode;
+      savePrefs();
+      renderControls();
+      void run();
+    } }, label);
+    modeBtns.set(mode, b);
+    modes.appendChild(b);
+  }
+  // Off-path metres go in the status line.
   const note = el('p', { class: 'sheet-note muted small' });
   // Route mode: detour budget.
   const detourLabel = el('b');
@@ -109,7 +118,7 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
   const goBtn = el('button', { class: 'go', type: 'button', onclick: () => void go() }, 'Go');
   // Hand-off (feedback-3): the chosen route in Google Maps (turn-by-turn, in parts when long), Apple Maps (destination only), or as GPX.
   const handoff = el('div', { class: 'handoff', hidden: true });
-  const sheet = el('div', { class: 'sheet route', hidden: true }, el('div', { class: 'grab' }), closeBtn, title, note, routeControls, loopControls, cands, status, goBtn, handoff);
+  const sheet = el('div', { class: 'sheet route', hidden: true }, el('div', { class: 'grab' }), closeBtn, title, note, modes, routeControls, loopControls, cands, status, goBtn, handoff);
 
   const barText = el('div', { class: 't' });
   const barSwatch = el('div', { class: 'sw' });
@@ -152,10 +161,15 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
   }
 
   function renderControls(): void {
+    for (const [mode, b] of modeBtns) {
+      b.classList.toggle('on', mode === prefs.mode);
+      b.setAttribute('aria-pressed', String(mode === prefs.mode));
+    }
     routeControls.hidden = kind !== 'route';
     loopControls.hidden = kind !== 'loop';
-    note.textContent =
-      kind === 'loop'
+    note.textContent = prefs.mode === 'bike'
+      ? 'Timed for cycling, with walking time where you need to dismount. Dashed lines have no mapped path.'
+      : kind === 'loop'
         ? 'Round trips on streets and paths, timed at walking pace.'
         : 'Routes follow paths where they exist and straight lines where they don’t, timed at walking pace.';
     renderSlider();
@@ -252,14 +266,14 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
     // One "Google Maps" button, or one per part — "1 of 2 · 5.7 km", "2 of 2 · 7.2 km" (two to a line; the
     // arrow and the note name the app) — with the full words in the accessible name.
     const google = parts.map((p, i) => {
-      const href = googleMapsUrl(p, { navigate: true, originFromDevice: fromDevice && i === 0 });
+      const href = googleMapsUrl(p, { mode: prefs.mode, navigate: true, originFromDevice: fromDevice && i === 0 });
       const part = `${i + 1} of ${n} · ${km(p.lengthM)}`;
       const aria = n > 1 ? `Google Maps, ${partLabel(i, n)}, ${km(p.lengthM)}` : 'Google Maps';
       return i === 0 ? link(href, 'gmaps', { 'aria-label': aria }, svg(icons.locate), n > 1 ? part : 'Google Maps') : link(href, 'part', { 'aria-label': aria }, part);
     });
     const apple =
       kind === 'route' && dest
-        ? link(appleMapsUrl(dest.lonlat, fromDevice ? undefined : origin ?? undefined), 'amaps', { title: 'Walking directions to the destination only — Apple Maps takes no checkpoints' }, 'Apple Maps')
+        ? link(appleMapsUrl(dest.lonlat, fromDevice ? undefined : origin ?? undefined, prefs.mode), 'amaps', { title: `${prefs.mode === 'bike' ? 'Cycling' : 'Walking'} directions to the destination only — Apple Maps takes no checkpoints` }, 'Apple Maps')
         : null;
     const gpx = el('button', { class: 'btn small gpx', type: 'button', onclick: () => void saveGpx(c) }, 'Save GPX');
     const note = gapM > 0 ? `Google Maps: ${n} part${n === 1 ? '' : 's'}, either side of the dashed ${km(gapM)}.` : n > 1 ? `Google Maps: ${n} parts (9 checkpoints per trip).` : '';
@@ -346,8 +360,8 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
     try {
       const res =
         kind === 'loop'
-          ? await ctx.engines.route.loop({ from: origin, mode: TRAVEL_MODE, targetKm: prefs.loopKm })
-          : await ctx.engines.route.route({ from: origin, to: dest!.lonlat, mode: TRAVEL_MODE, detour: prefs.detour });
+          ? await ctx.engines.route.loop({ from: origin, mode: prefs.mode, targetKm: prefs.loopKm })
+          : await ctx.engines.route.route({ from: origin, to: dest!.lonlat, mode: prefs.mode, detour: prefs.detour });
       if (my !== seq) return;
       if (!res.candidates.length) {
         throw new Error(
@@ -458,7 +472,7 @@ export function createRouteSheet(ctx: AppContext): RouteSheet {
     const my = ++seq;
     setStatus(el('div', { class: 'spinner-row' }, el('span', { class: 'spinner' }), 'Drawing the straight line…'));
     try {
-      const res = await ctx.engines.route.directLine({ from, to, mode: TRAVEL_MODE, detour: prefs.detour });
+      const res = await ctx.engines.route.directLine({ from, to, mode: prefs.mode, detour: prefs.detour });
       if (my !== seq) return;
       showResult(res);
     } catch (e) {
